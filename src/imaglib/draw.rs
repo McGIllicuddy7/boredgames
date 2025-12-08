@@ -1,13 +1,11 @@
 use std::{error::Error, f32::consts::PI};
-use crate::imaglib::draw::colors::RED;
-use serde_derive::{Deserialize, Serialize};
 pub use super::letters::*;
 use minifb::{Key, Window, WindowOptions};
 
 pub use super::math::*;
 #[derive(Copy, Clone)]
 #[repr(C)]
-#[derive(Serialize, Deserialize,Debug)]
+#[derive(Debug)]
 pub struct Color {
     pub b: u8,
     pub g: u8,
@@ -34,7 +32,7 @@ pub mod colors{
     pub const DARK_GREY:Color = Color{r:55, g:55, b:55, a:255};
 }
 #[derive(Clone)]
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug)]
 pub struct Image {
     pub height: usize,
     pub width: usize,
@@ -364,8 +362,8 @@ impl Image {
         b.h = self.height as i32;*/
         let s = start.to_real();
         let e = end.to_real();
-        for y in b.y..b.y+b.h+1 as i32{
-            for x in b.x..b.x+b.w+1 as i32{
+        for y in b.y..b.y+b.h+1_i32{
+            for x in b.x..b.x+b.w+1_i32{
                 if x<0 || y<0{
                     continue;
                 }

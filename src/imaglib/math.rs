@@ -1,7 +1,7 @@
 use std::{f64::consts::PI, ops::Mul, sync::Mutex};
-use serde_derive::{Deserialize, Serialize};
+//use serde_derive::{Deserialize, Serialize};
 #[derive(Copy, Clone, PartialEq,Debug)]
-#[derive(Serialize, Deserialize)]
+//#[derive(Serialize, Deserialize)]
 pub struct Vec2r {
     pub x: f32,
     pub y: f32,
@@ -105,7 +105,7 @@ impl std::ops::DivAssign<f32> for Vec2r{
 }
 
 
-#[derive(Serialize, Deserialize)]
+//#[derive(Serialize, Deserialize)]
 #[derive(Copy, Clone, PartialEq, Eq,Debug)]
 pub struct Vec2 {
     pub x: i32,
@@ -425,8 +425,8 @@ pub fn rand_int()->i64{
 }
 pub fn rand_float()->f64{
     const RES:u64 = 1_000_000;
-    let base = ((rand()%RES)as f64)/(RES as f64);
-    base
+    
+    ((rand()%RES)as f64)/(RES as f64)
 }
 pub fn rand_angle()->f64{
     rand_float()*2.*PI
