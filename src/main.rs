@@ -30,6 +30,7 @@ impl eframe::App for State{
 }
 impl State{
     pub fn render(&mut self, ui:&mut Ui){
+        ui.add_visible(visible, widget)
         if ui.button("testing 1 2 3").clicked(){
             exit(0);
         }
