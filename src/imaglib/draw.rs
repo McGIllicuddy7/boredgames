@@ -1,11 +1,12 @@
 use std::{error::Error, f32::consts::PI};
 pub use super::letters::*;
 use minifb::{Key, Window, WindowOptions};
-
+use serde::{Deserialize, Serialize};
+use serde_derive::{Deserialize, Serialize};
 pub use super::math::*;
 #[derive(Copy, Clone)]
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Color {
     pub b: u8,
     pub g: u8,
@@ -32,7 +33,7 @@ pub mod colors{
     pub const DARK_GREY:Color = Color{r:55, g:55, b:55, a:255};
 }
 #[derive(Clone)]
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Image {
     pub height: usize,
     pub width: usize,
