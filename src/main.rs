@@ -2,6 +2,9 @@ use std::{error::Error, process::exit};
 
 use eframe::{App, AppCreator, CreationContext, NativeOptions, egui::{self, Ui}};
 pub mod utils;
+pub mod server;
+pub mod client;
+pub mod communication;
 pub struct GuiState{
     pub username:String,
 }
