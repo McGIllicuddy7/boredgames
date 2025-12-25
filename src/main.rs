@@ -1,12 +1,14 @@
 use std::{error::Error, process::exit};
 
 use eframe::{App, AppCreator, CreationContext, NativeOptions, egui::{self, Ui}};
+
+use crate::client::Client;
 pub mod utils;
 pub mod server;
 pub mod client;
 pub mod communication;
 pub struct GuiState{
-    pub username:String,
+    pub client:Client
 }
 fn main() ->Result<(), Box< dyn Error>>{
     gui_run()?;
@@ -17,7 +19,7 @@ pub fn gui_run()->Result<(),impl Error>{
     eframe::run_native("bored games", NativeOptions::default(), Box::new(app_create))
 }
 pub fn app_create<'b>(c:&CreationContext<'b>)->Result<Box<dyn App>,Box<dyn Error + Send + Sync + 'static>> {
-    let out = Box::new(GuiState{username:"Bridget".into()});
+    let out = Box::new(GuiState{client:Client::new()});
     let theme = if let Some(theme) = c.egui_ctx.system_theme(){
         theme
     } else{
@@ -37,12 +39,7 @@ impl eframe::App for GuiState{
 }
 impl GuiState{
     pub fn render(&mut self, ui:&mut Ui){
-        ui.vertical_centered(|ui|{
-            if ui.button("testing 1 2 3").clicked(){
-                exit(0);
-            }
-            ui.label("hi there");
-        });
+        self.client.update(ui);
 
     }
 }

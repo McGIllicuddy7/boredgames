@@ -105,6 +105,7 @@ pub fn try_read_object<'a,T:Deserialize<'a>>(stream:&mut TcpStream, buffer:&'a m
     for _  in 0..size as usize{
         buffer.push(0);
     }
+    stream.set_nonblocking(false)?; 
     if let Err(e) =stream.read_exact( buffer){
         stream.set_nonblocking(false)?; 
         if e.kind() == std::io::ErrorKind::WouldBlock{
