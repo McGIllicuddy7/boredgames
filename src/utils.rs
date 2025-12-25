@@ -74,7 +74,7 @@ pub fn throws(x:i32)->throws!(i32){
 }
 #[test]
 pub fn test0()->throws!(){
-    try_catch!({throws(10);} catch |e| {eprintln!("{:#?}", e);});
+    try_catch!({throws(10)?;} catch |e| {eprintln!("{:#?}", e);});
     Ok(())
 }
 

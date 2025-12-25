@@ -1,8 +1,19 @@
-use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
+
+use serde::{Deserialize, Serialize};
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Loc{
+    pub x:i32, pub y:i32,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Token{
+    pub location:Loc,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct State{
     pub messages:Vec<(String, String)>,
+    pub tokens:HashMap<String, Token>,
 } 
 #[derive(Serialize, Deserialize, Debug,Clone)]
 pub enum EventData{

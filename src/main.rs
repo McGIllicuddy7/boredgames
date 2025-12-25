@@ -1,6 +1,6 @@
 use std::{error::Error, process::exit};
 
-use eframe::{App, AppCreator, CreationContext, NativeOptions, egui::{self, Ui}};
+use eframe::{App, AppCreator, CreationContext, NativeOptions, egui::{self, Style, Ui}};
 
 use crate::client::Client;
 pub mod utils;
@@ -30,7 +30,7 @@ pub fn app_create<'b>(c:&CreationContext<'b>)->Result<Box<dyn App>,Box<dyn Error
 }
 
 impl eframe::App for GuiState{
-    fn update(&mut self, ctx: &eframe::egui::Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &eframe::egui::Context, _frame: &mut eframe::Frame) {
        egui::CentralPanel::default().show(ctx, |ui| {
             self.render(ui);
        });
