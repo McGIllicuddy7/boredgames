@@ -1,10 +1,9 @@
-use std::{collections::{HashMap, VecDeque}, net::{TcpListener, TcpStream}, sync::{Arc, Mutex}, thread::JoinHandle};
+use std::{collections::HashMap, net::{TcpListener, TcpStream}, sync::{Arc, Mutex}, thread::JoinHandle};
 
 
 
-use eframe::egui::EventFilter;
 
-use crate::{try_catch, utils::{read_object, try_read_object, write_object}};
+use crate::utils::{read_object, try_read_object, write_object};
 use crate::communication::*;
 pub struct UserConnection{
     pub username:String,
@@ -14,6 +13,12 @@ pub struct Server{
     pub clients:HashMap<String, UserConnection>, 
     pub new_connections:Arc<Mutex<Vec<TcpStream>>>, 
 }
+impl Default for State {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl State{
     pub fn new()->Self{
         Self { messages: Vec::new() , tokens:HashMap::new()}
@@ -23,7 +28,7 @@ impl Server{
     pub fn handle_client(should_log:bool,_name:&String, con:&mut UserConnection)->Vec<Event>{
         let mut events = Vec::new();
         let mut buf = Vec::new();
-        while let Some(t) = try_read_object::<Event>(&mut con.stream,&mut buf).unwrap().or_else(||{None}){
+        while let Some(t) = try_read_object::<Event>(&mut con.stream,&mut buf).unwrap().or({None}){
             if should_log{
                 println!("log:{:#?}", t);
             }  
@@ -121,19 +126,17 @@ impl Server{
     }
     pub fn accept_clients(should_log:bool, list:Arc<Mutex<Vec<TcpStream>>>){
         let stream = TcpListener::bind("127.0.0.1:8080").unwrap();
-        for i in stream.incoming(){
-            if let Ok(i) = i{
-                if should_log{
-                    println!("accepted");
-                } 
-               let lsck = list.lock();
-               let mut lock = match lsck{
-                    Ok(l ) => l,
-                    Err(l) => l.into_inner()
-                };
-                lock.push(i);
-                drop(lock);
-            }
+        for i in stream.incoming().flatten(){
+            if should_log{
+                println!("accepted");
+            } 
+           let lsck = list.lock();
+           let mut lock = match lsck{
+                Ok(l ) => l,
+                Err(l) => l.into_inner()
+            };
+            lock.push(i);
+            drop(lock);
         }
     }
     pub fn serve(should_log:bool){

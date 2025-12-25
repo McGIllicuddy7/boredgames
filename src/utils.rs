@@ -55,7 +55,7 @@ pub trait AsErr<T>{
 impl<T> AsErr<T> for Option<T>{
     fn as_err(self)->crate::throws!(T) {
         match self{
-            Some(v) =>{ return Ok(v);},
+            Some(v) =>{ Ok(v)},
             None => {throw!("option was none");},
         }
     }
@@ -63,8 +63,8 @@ impl<T> AsErr<T> for Option<T>{
 impl<T, U:Error+'static> AsErr<T> for Result<T, U>{
     fn as_err(self)->crate::throws!(T) {
         match self{
-            Ok(v) =>{ return Ok(v);},
-            Err(v) => {return Err(Box::new(v));},
+            Ok(v) =>{ Ok(v)},
+            Err(v) => {Err(Box::new(v))},
         }
     }
 }
@@ -119,7 +119,7 @@ pub fn try_read_object<'a,T:Deserialize<'a>>(stream:&mut TcpStream, buffer:&'a m
 
 pub fn write_object<T:Serialize>(stream:&mut TcpStream,v:&T)->throws!(){
     let s= serde_json::to_string(v)?;
-    let size:[u8;8] =unsafe{std::mem::transmute((s.len() as u64).to_le())};
+    let size:[u8;8] =unsafe{u64::to_ne_bytes((s.len() as u64).to_le())};
     stream.write(&size)?;
     stream.write(s.as_bytes())?;
     Ok(())

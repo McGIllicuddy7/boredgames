@@ -1,6 +1,6 @@
-use std::{error::Error, process::exit};
+use std::error::Error;
 
-use eframe::{App, AppCreator, CreationContext, NativeOptions, egui::{self, Style, Ui}};
+use eframe::{App, CreationContext, NativeOptions, egui::{self, Ui}};
 
 use crate::client::Client;
 pub mod utils;
@@ -19,12 +19,14 @@ pub fn gui_run()->Result<(),impl Error>{
     eframe::run_native("bored games", NativeOptions::default(), Box::new(app_create))
 }
 pub fn app_create<'b>(c:&CreationContext<'b>)->Result<Box<dyn App>,Box<dyn Error + Send + Sync + 'static>> {
+    egui_extras::install_image_loaders(&c.egui_ctx);
     let out = Box::new(GuiState{client:Client::new()});
     let theme = if let Some(theme) = c.egui_ctx.system_theme(){
         theme
     } else{
         c.egui_ctx.theme()
-    };
+    }; 
+
     c.egui_ctx.set_theme(theme);
     Ok(out)
 }

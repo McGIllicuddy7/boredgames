@@ -1,6 +1,6 @@
-use std::{io::Write, net::TcpStream, process::exit};
+use std::{net::TcpStream, process::exit};
 
-use eframe::egui::{self, Align2, Color32, FontId, Image, ImageSource, Pos2, Rect, Sense, Stroke, Ui, Vec2, Widget, WidgetRect, style::WidgetVisuals};
+use eframe::egui::{self, Image, ImageSource, Pos2, Rect, Ui, Vec2};
 
 use crate::{communication::*, utils::{self, try_read_object, write_object}};
 pub struct Client{
@@ -10,6 +10,12 @@ pub struct Client{
     pub username:String,
     pub connection:Option<TcpStream>,
 }
+impl Default for Client {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Client{
     pub fn new()->Self{
         Self { state: State::new(), typed_message: String::new(), ip_address:"127.0.0.1:8080".into(), connection: None, username:"root".into()}
@@ -45,7 +51,7 @@ impl Client{
                     should_host = true;
                 }
                 if let Some(s) = self.connection.as_ref(){
-                    if let Ok(_) = s.take_error(){
+                    if s.take_error().is_ok(){
                         ui.label("connected");
                     }else{
                         self.connection = None;
@@ -71,9 +77,9 @@ impl Client{
                     paint.circle(Pos2 { x: token.location.x as f32*10.0, y:token.location.y as f32*10.0 }, 5.0, Color32::DARK_GREEN, Stroke::NONE);
                     paint.text(Pos2 { x: token.location.x as f32*10.0, y:token.location.y as f32*10.0 }, Align2::LEFT_TOP, name, FontId::monospace(16.0), Color32::BLACK);
                 }*/
-                //let img = Image::new(ImageSource::Uri("file:///Users/bridget/boredgames/SOLARIS.jpg".into()));
-               // let img = Image::from_uri("https://en.wikipedia.org/wiki/File:Euklid.jpg");
-               // ui.put(Rect { min: Pos2::new(0.0, 0.0), max: Pos2::new(500.0,500.0) },img);
+                let img = Image::new(ImageSource::Uri("file://./SOLARIS.jpg".into()));
+                //ui.put(Rect { min: Pos2::new(0.0, 0.0), max: Pos2::new(500.0,500.0) },img);
+                 //ui.put(Rect { min: Pos2::new(400.0, 400.0), max: Pos2::new(450.0,450.0) },img2);
                 ui.allocate_ui(Vec2::new(500.0, 500.0), |ui| {
                     ui.with_layout(egui::Layout::bottom_up(egui::Align::Min),|ui|{
                             ui.group(|ui|{
@@ -139,10 +145,8 @@ impl Client{
                             println!("Error:{:#?}",a);
                         }                 
                         self.connection = None;
-                    } else{
-                        if should_log{
-                            println!("sent");
-                        }                  
+                    } else if should_log{
+                        println!("sent");
                     }
                 }
                 self.typed_message.clear();
