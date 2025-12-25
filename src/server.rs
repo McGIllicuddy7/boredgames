@@ -1,7 +1,9 @@
-use std::{collections::HashMap, net::{TcpListener, TcpStream}, sync::{Arc, Mutex}, thread::JoinHandle};
+use std::{collections::HashMap, error::Error, net::{TcpListener, TcpStream}, sync::{Arc, Mutex}, thread::JoinHandle};
 
 
 
+
+use local_ip_address::local_ip;
 
 use crate::utils::{read_object, try_read_object, write_object};
 use crate::communication::*;
@@ -28,7 +30,7 @@ impl Server{
     pub fn handle_client(should_log:bool,_name:&String, con:&mut UserConnection)->Vec<Event>{
         let mut events = Vec::new();
         let mut buf = Vec::new();
-        while let Some(t) = try_read_object::<Event>(&mut con.stream,&mut buf).unwrap().or({None}){
+        while let Some(t) = try_read_object::<Event>(&mut con.stream,&mut buf).or_else(|_|{Ok::<Option<Event>, Box<dyn Error>>(None)}).unwrap(){
             if should_log{
                 println!("log:{:#?}", t);
             }  
@@ -125,7 +127,10 @@ impl Server{
         let _ = handle.join();
     }
     pub fn accept_clients(should_log:bool, list:Arc<Mutex<Vec<TcpStream>>>){
-        let stream = TcpListener::bind("127.0.0.1:8080").unwrap();
+        let Ok(stream) = TcpListener::bind(local_ip().unwrap().to_string()+":8080") else {
+            println!("failed to create");
+            return;
+        };
         for i in stream.incoming().flatten(){
             if should_log{
                 println!("accepted");

@@ -1,6 +1,7 @@
 use std::{net::TcpStream, process::exit};
 
 use eframe::egui::{self, Image, ImageSource, Pos2, Rect, Ui, Vec2};
+use local_ip_address::local_ip;
 
 use crate::{communication::*, utils::{self, try_read_object, write_object}};
 pub struct Client{
@@ -18,7 +19,9 @@ impl Default for Client {
 
 impl Client{
     pub fn new()->Self{
-        Self { state: State::new(), typed_message: String::new(), ip_address:"127.0.0.1:8080".into(), connection: None, username:"root".into()}
+        let addr = local_ip().unwrap();
+        Self { state: State::new(), typed_message: String::new(), 
+            ip_address:addr.to_string()+":8080", connection: None, username:"root".into()}
     }
     pub fn update(&mut self, ui:&mut Ui){
             ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
