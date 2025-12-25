@@ -78,7 +78,7 @@ impl Client{
                     paint.text(Pos2 { x: token.location.x as f32*10.0, y:token.location.y as f32*10.0 }, Align2::LEFT_TOP, name, FontId::monospace(16.0), Color32::BLACK);
                 }*/
                 let img = Image::new(ImageSource::Uri("file://./SOLARIS.jpg".into()));
-                //ui.put(Rect { min: Pos2::new(0.0, 0.0), max: Pos2::new(500.0,500.0) },img);
+                ui.put(Rect { min: Pos2::new(0.0, 0.0), max: Pos2::new(500.0,500.0) },img);
                  //ui.put(Rect { min: Pos2::new(400.0, 400.0), max: Pos2::new(450.0,450.0) },img2);
                 ui.allocate_ui(Vec2::new(500.0, 500.0), |ui| {
                     ui.with_layout(egui::Layout::bottom_up(egui::Align::Min),|ui|{
