@@ -13,7 +13,7 @@ pub struct State {
     pub messages: Vec<(String, String)>,
     pub tokens: HashMap<String, Token>,
 }
-#[derive(Serialize, Deserialize,Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub enum EventData {
     Message {
         from: String,
@@ -29,17 +29,24 @@ pub enum EventData {
     Kill {
         password: String,
     },
-    TokenMoved{
-        name:String, 
-        to:Pos2, 
-        time_stamp:i32,
+    TokenMoved {
+        name: String,
+        to: Pos2,
+        time_stamp: i32,
     },
-    ImageUpload{
-        name:String, 
-        image:ImageData
+    TokenCreated {
+        name: String,
+        token: Token,
     },
-    SendState{
-        state:State,
+    TokenDestroyed {
+        name: String,
+    },
+    ImageUpload {
+        name: String,
+        image: ImageData,
+    },
+    SendState {
+        state: State,
     },
     HeartBeat,
 }

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, net::TcpStream, process::exit};
+use std::{collections::HashMap, fs::FileType, net::TcpStream, process::exit};
 
 use eframe::egui::{self, Image, ImageData, ImageSource, Pos2, Rect, Sense, Ui, Vec2};
 use local_ip_address::local_ip;
@@ -13,7 +13,7 @@ pub struct Client {
     pub ip_address: String,
     pub username: String,
     pub connection: Option<TcpStream>,
-    pub loaded_images:HashMap<String, ImageData>,
+    pub loaded_images: HashMap<String, ImageData>,
 }
 impl Default for Client {
     fn default() -> Self {
@@ -30,7 +30,7 @@ impl Client {
             ip_address: addr.to_string() + ":8080",
             connection: None,
             username: "root".into(),
-            loaded_images:HashMap::new(),
+            loaded_images: HashMap::new(),
         }
     }
     pub fn update(&mut self, ui: &mut Ui) {
@@ -41,9 +41,59 @@ impl Client {
             },
         );
     }
+    pub fn draw_images(&mut self, ui: &mut Ui) {
+        let f = std::fs::read_dir(".").unwrap();
+        ui.vertical(move |ui| {
+            for i in f {
+                if let Ok(e) = i {
+                    if e.file_type().unwrap().is_file() {
+                        let name = e.file_name().into_string().unwrap();
+                        if name.ends_with(".png")
+                            || name.ends_with(".jpg")
+                            || name.ends_with(".jpeg")
+                        {
+                            let img = Image::new(ImageSource::Uri(
+                                ("file://".to_string() + "./" + &name).into(),
+                            ));
+                            let r = ui.add(
+                                egui::Button::image_and_text(img, name.clone()).sense(Sense::all()),
+                            );
+                            if r.drag_stopped() {
+                                let p = ui.input(|i| i.pointer.latest_pos().unwrap());
+                                if p.x < 50.0 || p.y < 50.0 || p.x > 800. || p.y > 800.0 {
+                                    continue;
+                                }
+                                let p2 = Pos2 {
+                                    x: (p.x as i32 / 20 * 20) as f32,
+                                    y: (p.y as i32 / 20 * 20) as f32,
+                                };
+                                let count = self.state.tokens.len();
+                                let tname = format!("{:#?}_{:#?}", self.username, count);
+                                let fname = format!("file://./{}", name);
+                                println!("{:#?}, {:#?}", p2, fname);
+                                let ev = Event {
+                                    source: self.username.clone(),
+                                    data: EventData::TokenCreated {
+                                        name: tname,
+                                        token: Token {
+                                            location: p2,
+                                            image: fname,
+                                        },
+                                    },
+                                };
+                                if let Some(obj) = self.connection.as_mut() {
+                                    let _ = write_object(obj, &ev);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
     pub fn draw_map(&mut self, ui: &mut Ui) {
         let img0 = Image::new(ImageSource::Uri("file://./board.png".into()));
-        let maxd = 850.0;
+        let maxd = 800.0;
         ui.place(
             Rect {
                 min: Pos2::new(50.0, 50.0),
@@ -59,7 +109,7 @@ impl Client {
             Sense::empty(),
         );
         for (_name, token) in &mut self.state.tokens {
-          //  println!("drew:{_name}");
+            //  println!("drew:{_name}");
             let img = Image::new(ImageSource::Uri(token.image.clone().into()));
             let ar = egui::Area::new(_name.clone().into())
                 .current_pos(Pos2::new(token.location.x as f32, token.location.y as f32))
@@ -68,7 +118,8 @@ impl Client {
                     ui.add(img2);
                 });
             if ar.response.dragged() {
-                let mut r = Pos2::new(token.location.x, token.location.y)+ ar.response.drag_delta();
+                let mut r =
+                    Pos2::new(token.location.x, token.location.y) + ar.response.drag_delta();
                 if r.x < 50.0 {
                     r.x = 50.0;
                 }
@@ -91,10 +142,20 @@ impl Client {
                     x: ((token.location.x as i32) / 20 * 20) as f32,
                     y: ((token.location.y as i32) / 20 * 20) as f32,
                 };
-                if let Some(c) = self.connection.as_mut(){
-                    write_object(c, &Event{source:self.username.clone(), data:EventData::TokenMoved { name: _name.clone(), to: token.location, time_stamp: 0 }}).unwrap();
+                if let Some(c) = self.connection.as_mut() {
+                    write_object(
+                        c,
+                        &Event {
+                            source: self.username.clone(),
+                            data: EventData::TokenMoved {
+                                name: _name.clone(),
+                                to: token.location,
+                                time_stamp: 0,
+                            },
+                        },
+                    )
+                    .unwrap();
                 }
-                
             }
         }
     }
@@ -103,14 +164,14 @@ impl Client {
         if let Some(t) = self.connection.as_mut() {
             while let Ok(ev) = try_read_object::<Event>(t, &mut Vec::new()) {
                 if let Some(ev) = ev {
-                    match ev.data{
-                        EventData::SendState { state }=>{
+                    match ev.data {
+                        EventData::SendState { state } => {
                             self.state = state;
                         }
-                        EventData::ImageUpload { name, image }=>{
+                        EventData::ImageUpload { name, image } => {
                             todo!()
                         }
-                        _=>{
+                        _ => {
                             todo!()
                         }
                     }
@@ -153,11 +214,11 @@ impl Client {
             });
             ui.horizontal(|ui| {
                 self.draw_map(ui);
-                ui.allocate_ui(Vec2::new(500.0, 500.0), |ui| {
+                ui.allocate_ui(Vec2::new(200.0, 500.0), |ui| {
                     ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                         ui.group(|ui| {
                             ui.set_min_height(400.0);
-                            ui.set_min_width(400.0);
+                            ui.set_min_width(200.0);
                             ui.set_max_height(430.0);
                             ui.set_clip_rect(ui.min_rect());
                             ui.set_min_height(430.0);
@@ -167,6 +228,7 @@ impl Client {
                         });
                     });
                 });
+                self.draw_images(ui);
             });
             ui.horizontal(|ui| {
                 ui.label("enter message:");
@@ -250,7 +312,7 @@ impl Client {
         }
         if should_host {
             spawn_host(should_log);
-            if let Ok(mut con) = TcpStream::connect("127.0.0.1:8080") {
+            if let Ok(mut con) = TcpStream::connect(local_ip().unwrap().to_string() + ":8080") {
                 let _ = write_object(
                     &mut con,
                     &Event {

@@ -61,7 +61,7 @@ impl Server {
             },
         );
         let mut state_changed;
-        let mut loaded_images:HashMap<String, ImageData> = HashMap::new();
+        let mut loaded_images: HashMap<String, ImageData> = HashMap::new();
         let mut uploads = Vec::new();
         'outer: loop {
             uploads.clear();
@@ -108,20 +108,32 @@ impl Server {
                     EventData::HeartBeat => {
                         continue;
                     }
-                    EventData::ImageUpload {name, image }=>{
+                    EventData::ImageUpload { name, image } => {
                         state_changed = true;
                         uploads.push(name.clone());
                         loaded_images.insert(name, image);
                     }
-                    EventData::TokenMoved { name, to, time_stamp:_ }=>{
+                    EventData::TokenMoved {
+                        name,
+                        to,
+                        time_stamp: _,
+                    } => {
                         state_changed = true;
-                        if let Some(t) = app_state.tokens.get_mut(&name){
+                        if let Some(t) = app_state.tokens.get_mut(&name) {
                             t.location = to;
                         }
                     }
-                    EventData::SendState { state }=>{
+                    EventData::SendState { state } => {
                         state_changed = true;
                         app_state = state;
+                    }
+                    EventData::TokenDestroyed { name } => {
+                        state_changed = true;
+                        app_state.tokens.remove(&name);
+                    }
+                    EventData::TokenCreated { name, token } => {
+                        state_changed = true;
+                        app_state.tokens.insert(name, token);
                     }
                 }
             }
@@ -167,13 +179,23 @@ impl Server {
                     EventData::HeartBeat => {
                         continue;
                     }
-                    EventData::ImageUpload { name:_, image:_ }=>{
+                    EventData::ImageUpload { name: _, image: _ } => {
                         continue;
                     }
-                    EventData::TokenMoved { name:_, to:_, time_stamp:_ }=>{
+                    EventData::TokenMoved {
+                        name: _,
+                        to: _,
+                        time_stamp: _,
+                    } => {
                         continue;
                     }
-                    EventData::SendState { state }=>{
+                    EventData::SendState { state } => {
+                        continue;
+                    }
+                    EventData::TokenDestroyed { name } => {
+                        continue;
+                    }
+                    EventData::TokenCreated { name, token } => {
                         continue;
                     }
                 }
@@ -182,13 +204,28 @@ impl Server {
             drop(lck);
             if state_changed {
                 for i in &mut this.clients {
-                    let _ = write_object(&mut i.1.stream, &Event{source:"_server".into(), data:EventData::SendState { state: app_state.clone() }});
+                    let _ = write_object(
+                        &mut i.1.stream,
+                        &Event {
+                            source: "_server".into(),
+                            data: EventData::SendState {
+                                state: app_state.clone(),
+                            },
+                        },
+                    );
                 }
-                for j in &uploads{
-                    for i in &mut this.clients{
-                        let _ = write_object(&mut i.1.stream, &Event{
-                            source:"_server".into(), data:EventData::ImageUpload { name:j.clone() , image: loaded_images[j].clone() }
-                        });
+                for j in &uploads {
+                    for i in &mut this.clients {
+                        let _ = write_object(
+                            &mut i.1.stream,
+                            &Event {
+                                source: "_server".into(),
+                                data: EventData::ImageUpload {
+                                    name: j.clone(),
+                                    image: loaded_images[j].clone(),
+                                },
+                            },
+                        );
                     }
                 }
             }

@@ -8,8 +8,8 @@ use eframe::{
 use crate::client::Client;
 pub mod client;
 pub mod communication;
-pub mod server;
 pub mod database;
+pub mod server;
 pub mod utils;
 pub struct GuiState {
     pub client: Client,
@@ -30,8 +30,9 @@ pub fn app_create<'b>(
     c: &CreationContext<'b>,
 ) -> Result<Box<dyn App>, Box<dyn Error + Send + Sync + 'static>> {
     egui_extras::install_image_loaders(&c.egui_ctx);
-   // c.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
-    c.egui_ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(Vec2::new(1280., 960.)));
+    // c.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+    c.egui_ctx
+        .send_viewport_cmd(egui::ViewportCommand::MinInnerSize(Vec2::new(1280., 960.)));
     let out = Box::new(GuiState {
         client: Client::new(),
     });
