@@ -1,6 +1,6 @@
 use std::{net::TcpStream, process::exit};
 
-use eframe::egui::{self, Image, ImageSource, Pos2, Rect, Ui, Vec2};
+use eframe::egui::{self, Image, ImageSource, Pos2, Rect, Sense, Ui, Vec2};
 use local_ip_address::local_ip;
 
 use crate::{communication::*, utils::{self, try_read_object, write_object}};
@@ -27,6 +27,16 @@ impl Client{
             ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
                 self.update_actual(ui);
             });
+    }
+    pub fn draw_map(&mut self, ui:&mut Ui){
+        let img0 = Image::new(ImageSource::Uri("file://./board.png".into()));
+        ui.place(Rect { min: Pos2::new(50.0, 50.0), max: Pos2::new(550.0,550.0) },img0);
+        ui.allocate_rect(Rect { min: Pos2::new(50.0, 50.0), max: Pos2::new(550.0,550.0) }, Sense::empty());
+        for (_name, token) in &self.state.tokens{
+            println!("drew:{_name}");
+            let img = Image::new(ImageSource::Uri(token.image.clone().into()));
+            ui.place(Rect { min: Pos2::new(token.location.x as f32 *10.0 -5.+50., token.location.y as f32 *10.0-5.+50.), max:Pos2::new(token.location.x as f32*10.0 +5.0+50., token.location.y as f32 *10.0+5.0 +50.)}, img);
+        }
     }
     pub fn update_actual(&mut self, ui:&mut Ui){
         let should_log = false;
@@ -80,9 +90,7 @@ impl Client{
                     paint.circle(Pos2 { x: token.location.x as f32*10.0, y:token.location.y as f32*10.0 }, 5.0, Color32::DARK_GREEN, Stroke::NONE);
                     paint.text(Pos2 { x: token.location.x as f32*10.0, y:token.location.y as f32*10.0 }, Align2::LEFT_TOP, name, FontId::monospace(16.0), Color32::BLACK);
                 }*/
-                let img = Image::new(ImageSource::Uri("file://./SOLARIS.jpg".into()));
-                ui.put(Rect { min: Pos2::new(0.0, 0.0), max: Pos2::new(500.0,500.0) },img);
-                 //ui.put(Rect { min: Pos2::new(400.0, 400.0), max: Pos2::new(450.0,450.0) },img2);
+                self.draw_map(ui);
                 ui.allocate_ui(Vec2::new(500.0, 500.0), |ui| {
                     ui.with_layout(egui::Layout::bottom_up(egui::Align::Min),|ui|{
                             ui.group(|ui|{
@@ -117,6 +125,7 @@ impl Client{
             if let Ok(mut con) = TcpStream::connect(&self.ip_address){
                 let _ = write_object(&mut con, &Event{source:self.username.clone(), data:EventData::Connection { username: self.username.clone() }});
                 if let Err(_) = write_object(&mut con, &Event{source:self.username.clone(),data:EventData::HeartBeat}){
+                    self.ip_address = local_ip().unwrap().to_string()+":8080";
                     self.connection = None;
                 }else{
                     self.connection = Some(con);

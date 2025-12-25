@@ -9,6 +9,7 @@ pub struct Loc{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Token{
     pub location:Loc,
+    pub image:String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct State{

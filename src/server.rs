@@ -40,7 +40,7 @@ impl Server{
     }
     pub fn handle_clients(should_log:bool,mut this:Self, handle:JoinHandle<()>){
         let mut state = State{messages:Vec::new(), tokens:HashMap::new()};
-        state.tokens.insert("test token".into(), Token{location:Loc { x: 10, y: 10 }});
+        state.tokens.insert("test token".into(), Token{location:Loc { x: 10, y: 10 }, image:"file://./orc.png".into()});
         let mut state_changed = false;
         'outer:loop{
             let mut events = Vec::new();

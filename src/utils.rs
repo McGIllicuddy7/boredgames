@@ -119,7 +119,7 @@ pub fn try_read_object<'a,T:Deserialize<'a>>(stream:&mut TcpStream, buffer:&'a m
 
 pub fn write_object<T:Serialize>(stream:&mut TcpStream,v:&T)->throws!(){
     let s= serde_json::to_string(v)?;
-    let size:[u8;8] =unsafe{u64::to_ne_bytes((s.len() as u64).to_le())};
+    let size:[u8;8] = u64::to_ne_bytes((s.len() as u64).to_le());
     stream.write(&size)?;
     stream.write(s.as_bytes())?;
     Ok(())
