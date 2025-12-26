@@ -1,6 +1,6 @@
-use std::{collections::{HashMap, HashSet}, fs::FileType, net::TcpStream, process::exit};
+use std::{collections::HashSet, net::TcpStream, process::exit};
 
-use eframe::egui::{self, Image, ImageData, ImageSource, Pos2, Rect, Sense, Ui, Vec2};
+use eframe::egui::{self, Image, ImageSource, Pos2, Rect, Sense, Ui, Vec2};
 use local_ip_address::local_ip;
 
 use crate::{
@@ -42,20 +42,22 @@ impl Client {
         );
     }
     pub fn draw_images(&mut self, ui: &mut Ui) {
-        let Ok(f) = std::fs::read_dir("./assets")else{
+        let path = path();
+        let Ok(f) = std::fs::read_dir(path)else{
+            println!("failed to read: {}", path);
             return;
         };
         ui.vertical(move |ui| {
             for i in f {
-                if let Ok(e) = i {
-                    if e.file_type().unwrap().is_file() {
+                if let Ok(e) = i
+                    && e.file_type().unwrap().is_file() {
                         let name = e.file_name().into_string().unwrap();
                         if name.ends_with(".png")
                             || name.ends_with(".jpg")
                             || name.ends_with(".jpeg")
                         {
                             let img = Image::new(ImageSource::Uri(
-                                ("file://".to_string() + "./assets/" + &name).into(),
+                                ("file://".to_string() + path+ &name).into(),
                             ));
                             let r = ui.add(
                                 egui::Button::image_and_text(img, name.clone()).sense(Sense::all()),
@@ -71,7 +73,7 @@ impl Client {
                                 };
                                 let count = self.state.tokens.len();
                                 let tname = format!("{:#?}_{:#?}", self.username, count);
-                                let fname = format!("file://./assets/{}", name);
+                                let fname = format!("file://{}/{}", path,name);
                                 println!("{:#?}, {:#?}", p2, fname);
                                 let ev = Event {
                                     source: self.username.clone(),
@@ -83,7 +85,7 @@ impl Client {
                                         },
                                     },
                                 };
-                                let n = "./assets/".to_string()+&name;
+                                let n = path.to_string()+"/"+&name;
                                 let ev0 = Event {
                                     source: self.username.clone(),
                                     data: EventData::ImageUpload { name:n.clone(), image:std::fs::read(n).unwrap()} 
@@ -100,16 +102,15 @@ impl Client {
                             }
                         }
                     }
-                }
             }
         });
     }
     pub fn draw_map(&mut self, ui: &mut Ui) {
-  
-        if let Err(_) = std::fs::File::open("./assets/board.png"){
+        let name = path().to_string()+"board.png";
+        if std::fs::File::open(&name).is_err(){
                 return;
         } 
-        let img0 = Image::new(ImageSource::Uri("file://./assets/board.png".into()));
+        let img0 = Image::new(ImageSource::Uri(("file://".to_string()+&name).into()));
         let maxd = 800.0;
         ui.place(
             Rect {
@@ -133,7 +134,7 @@ impl Client {
             }
             let img = Image::new(ImageSource::Uri(token.image.clone().into()));
             let ar = egui::Area::new(_name.clone().into())
-                .current_pos(Pos2::new(token.location.x as f32, token.location.y as f32))
+                .current_pos(Pos2::new(token.location.x, token.location.y))
                 .show(ui.ctx(), move |ui| {
                     let img2 = img.fit_to_exact_size(Vec2::new(20.0, 20.0));
                     ui.add(img2);
@@ -154,8 +155,8 @@ impl Client {
                     r.y = maxd;
                 }
                 token.location = Pos2 {
-                    x: r.x as f32,
-                    y: r.y as f32,
+                    x: r.x,
+                    y: r.y,
                 };
             }
             if ar.response.drag_stopped() {
@@ -183,7 +184,27 @@ impl Client {
     pub fn update_actual(&mut self, ui: &mut Ui) {
         let should_log = false;
         if let Some(t) = self.connection.as_mut() {
-            while let Ok(ev) = try_read_object::<Event>(t, &mut Vec::new()) {
+            loop{
+                let tr = try_read_object::<Event>(t, &mut Vec::new());
+                if tr.is_err(){
+                    if let Err(e) = tr{
+                        if let Ok(t) = e.downcast::<std::io::Error>(){
+                            match t.kind(){
+                                std::io::ErrorKind::WouldBlock=>{
+                                    break;
+                                }
+                                _=>{
+                                    self.connection = None;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
+                let Ok(ev) = tr else{
+                    break;
+                };
                 if let Some(ev) = ev {
                     match ev.data {
                         EventData::SendState { state } => {
@@ -243,7 +264,9 @@ impl Client {
                 if ui.button("enter").clicked() {
                     username_set = true;
                 }
-                ui.label(std::fs::canonicalize(".").unwrap().to_str().unwrap().to_string());
+                //ui.label(std::fs::canonicalize(".").unwrap().to_str().unwrap().to_string());
+                //let args:Vec<String> = std::env::args().collect();
+                //ui.label(args[0].clone());
             });
             ui.horizontal(|ui| {
                 self.draw_map(ui);

@@ -1,7 +1,6 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::{LazyLock}};
 
-use eframe::egui::{Image, ImageData, Pos2};
-use image::{ImageBuffer, RgbImage, RgbaImage};
+use eframe::egui::Pos2;
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Token {
@@ -54,4 +53,8 @@ pub enum EventData {
 pub struct Event {
     pub source: String,
     pub data: EventData,
+}
+pub fn path()->&'static str{
+    static S:LazyLock<&'static str> = std::sync::LazyLock::new(||{(std::env::home_dir().unwrap().to_string_lossy().to_string()+"/boredgames/assets/").leak()});
+    &S
 }

@@ -6,7 +6,6 @@ use std::{
     thread::JoinHandle,
 };
 
-use eframe::egui::{ImageData, Pos2};
 use local_ip_address::local_ip;
 
 use crate::communication::*;
@@ -53,13 +52,6 @@ impl Server {
             messages: Vec::new(),
             tokens: HashMap::new(),
         };
-        app_state.tokens.insert(
-            "test token".into(),
-            Token {
-                location: Pos2 { x: 80., y: 80.0 },
-                image: "file://./assets/orc.png".into(),
-            },
-        );
         let mut state_changed;
         let mut loaded_images: HashMap<String, Vec<u8>> = HashMap::new();
         let mut uploads = Vec::new();
@@ -201,13 +193,13 @@ impl Server {
                     } => {
                         continue;
                     }
-                    EventData::SendState { state } => {
+                    EventData::SendState { state: _ } => {
                         continue;
                     }
-                    EventData::TokenDestroyed { name } => {
+                    EventData::TokenDestroyed { name: _ } => {
                         continue;
                     }
-                    EventData::TokenCreated { name, token } => {
+                    EventData::TokenCreated { name: _, token: _ } => {
                         continue;
                     }
                 }

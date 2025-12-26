@@ -15,7 +15,8 @@ pub struct GuiState {
     pub client: Client,
 }
 fn main() -> Result<(), Box<dyn Error>> {
-    println!("{:#?}", std::fs::canonicalize(".").unwrap());
+    let s:Vec<String> = std::env::args().collect();
+    println!("{:#?}",s);
     gui_run()?;
     Ok(())
 }

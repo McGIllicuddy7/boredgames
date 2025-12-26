@@ -1,6 +1,5 @@
 use std::{collections::HashMap, net::IpAddr};
 
-use eframe::egui::ImageData;
 use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize)]
 pub struct DataBase {
