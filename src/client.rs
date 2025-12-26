@@ -208,6 +208,8 @@ impl Client {
                     break;
                 }
             }
+        }else{
+            self.connection = None;
         }
         let mut should_send = false;
         let mut should_connect = false;
@@ -241,6 +243,7 @@ impl Client {
                 if ui.button("enter").clicked() {
                     username_set = true;
                 }
+                ui.label(std::fs::canonicalize(".").unwrap().to_str().unwrap().to_string());
             });
             ui.horizontal(|ui| {
                 self.draw_map(ui);

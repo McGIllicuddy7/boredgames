@@ -15,6 +15,7 @@ pub struct GuiState {
     pub client: Client,
 }
 fn main() -> Result<(), Box<dyn Error>> {
+    println!("{:#?}", std::fs::canonicalize(".").unwrap());
     gui_run()?;
     Ok(())
 }
