@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::FileType, net::TcpStream, process::exit};
+use std::{collections::{HashMap, HashSet}, fs::FileType, net::TcpStream, process::exit};
 
 use eframe::egui::{self, Image, ImageData, ImageSource, Pos2, Rect, Sense, Ui, Vec2};
 use local_ip_address::local_ip;
@@ -13,7 +13,7 @@ pub struct Client {
     pub ip_address: String,
     pub username: String,
     pub connection: Option<TcpStream>,
-    pub loaded_images: HashMap<String, ImageData>,
+    pub loaded_images: HashSet<String>,
 }
 impl Default for Client {
     fn default() -> Self {
@@ -30,7 +30,7 @@ impl Client {
             ip_address: addr.to_string() + ":8080",
             connection: None,
             username: "root".into(),
-            loaded_images: HashMap::new(),
+            loaded_images: HashSet::new(),
         }
     }
     pub fn update(&mut self, ui: &mut Ui) {
@@ -42,7 +42,9 @@ impl Client {
         );
     }
     pub fn draw_images(&mut self, ui: &mut Ui) {
-        let f = std::fs::read_dir(".").unwrap();
+        let Ok(f) = std::fs::read_dir("./assets")else{
+            return;
+        };
         ui.vertical(move |ui| {
             for i in f {
                 if let Ok(e) = i {
@@ -53,7 +55,7 @@ impl Client {
                             || name.ends_with(".jpeg")
                         {
                             let img = Image::new(ImageSource::Uri(
-                                ("file://".to_string() + "./" + &name).into(),
+                                ("file://".to_string() + "./assets/" + &name).into(),
                             ));
                             let r = ui.add(
                                 egui::Button::image_and_text(img, name.clone()).sense(Sense::all()),
@@ -69,21 +71,32 @@ impl Client {
                                 };
                                 let count = self.state.tokens.len();
                                 let tname = format!("{:#?}_{:#?}", self.username, count);
-                                let fname = format!("file://./{}", name);
+                                let fname = format!("file://./assets/{}", name);
                                 println!("{:#?}, {:#?}", p2, fname);
                                 let ev = Event {
                                     source: self.username.clone(),
                                     data: EventData::TokenCreated {
-                                        name: tname,
+                                        name: tname.clone(),
                                         token: Token {
                                             location: p2,
-                                            image: fname,
+                                            image: fname.clone(),
                                         },
                                     },
                                 };
+                                let n = "./assets/".to_string()+&name;
+                                let ev0 = Event {
+                                    source: self.username.clone(),
+                                    data: EventData::ImageUpload { name:n.clone(), image:std::fs::read(n).unwrap()} 
+                                };
                                 if let Some(obj) = self.connection.as_mut() {
+                                    if !self.loaded_images.contains(&fname){
+                                        self.loaded_images.insert(fname);
+                                        let _ = write_object(obj, &ev0);
+                                    }
+                                   
                                     let _ = write_object(obj, &ev);
                                 }
+
                             }
                         }
                     }
@@ -92,7 +105,11 @@ impl Client {
         });
     }
     pub fn draw_map(&mut self, ui: &mut Ui) {
-        let img0 = Image::new(ImageSource::Uri("file://./board.png".into()));
+  
+        if let Err(_) = std::fs::File::open("./assets/board.png"){
+                return;
+        } 
+        let img0 = Image::new(ImageSource::Uri("file://./assets/board.png".into()));
         let maxd = 800.0;
         ui.place(
             Rect {
@@ -110,6 +127,10 @@ impl Client {
         );
         for (_name, token) in &mut self.state.tokens {
             //  println!("drew:{_name}");
+            if let Err(e) = std::fs::File::open(token.image.strip_prefix("file://").unwrap()){
+                println!("{:#?}:{:#?}", token.image, e);
+                continue;
+            }
             let img = Image::new(ImageSource::Uri(token.image.clone().into()));
             let ar = egui::Area::new(_name.clone().into())
                 .current_pos(Pos2::new(token.location.x as f32, token.location.y as f32))
@@ -169,7 +190,15 @@ impl Client {
                             self.state = state;
                         }
                         EventData::ImageUpload { name, image } => {
-                            todo!()
+                            println!("uploaded:{:#?}", name);
+                            let _ = std::fs::create_dir("assets");
+                            let e = std::fs::write(&name, &image);
+                            if let Err(e) = e{
+                                println!("{:#?}",e);
+                            }
+                            //let img = Image::new(ImageSource::Bytes { uri: name.clone().into(), bytes: image.into()});
+                            self.loaded_images.insert(name);
+                        
                         }
                         _ => {
                             todo!()
@@ -195,7 +224,8 @@ impl Client {
                     should_host = true;
                 }
                 if let Some(s) = self.connection.as_ref() {
-                    if s.take_error().is_ok() {
+                    let e = s.take_error();
+                    if e.is_ok() {
                         ui.label("connected");
                     } else {
                         self.connection = None;

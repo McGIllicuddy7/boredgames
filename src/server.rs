@@ -57,11 +57,11 @@ impl Server {
             "test token".into(),
             Token {
                 location: Pos2 { x: 80., y: 80.0 },
-                image: "file://./orc.png".into(),
+                image: "file://./assets/orc.png".into(),
             },
         );
         let mut state_changed;
-        let mut loaded_images: HashMap<String, ImageData> = HashMap::new();
+        let mut loaded_images: HashMap<String, Vec<u8>> = HashMap::new();
         let mut uploads = Vec::new();
         'outer: loop {
             uploads.clear();
@@ -111,6 +111,7 @@ impl Server {
                     EventData::ImageUpload { name, image } => {
                         state_changed = true;
                         uploads.push(name.clone());
+                        let _ = std::fs::write(&name, &image);
                         loaded_images.insert(name, image);
                     }
                     EventData::TokenMoved {
@@ -161,6 +162,16 @@ impl Server {
                     }
                     EventData::Connection { username } => {
                         if !this.clients.contains_key(&username) {
+                            for j in &loaded_images{
+                                let e =  Event {
+                                    source: "_server".into(),
+                                    data: EventData::ImageUpload {
+                                        name: j.0.clone(),
+                                        image: j.1.clone(),
+                                    }, 
+                                };
+                                let _ = write_object(&mut i, &e);
+                            }
                             this.clients.insert(
                                 username.clone(),
                                 UserConnection {
@@ -168,6 +179,7 @@ impl Server {
                                     stream: i,
                                 },
                             );
+
                         }
                     }
                     EventData::Disconnection { username: _ } => {
@@ -215,16 +227,18 @@ impl Server {
                     );
                 }
                 for j in &uploads {
-                    for i in &mut this.clients {
-                        let _ = write_object(
-                            &mut i.1.stream,
-                            &Event {
+                    let e =  Event {
                                 source: "_server".into(),
                                 data: EventData::ImageUpload {
                                     name: j.clone(),
                                     image: loaded_images[j].clone(),
                                 },
-                            },
+                            };
+
+                    for i in &mut this.clients {
+                        let _ = write_object(
+                            &mut i.1.stream,
+                            &e
                         );
                     }
                 }

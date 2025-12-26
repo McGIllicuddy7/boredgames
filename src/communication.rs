@@ -43,7 +43,7 @@ pub enum EventData {
     },
     ImageUpload {
         name: String,
-        image: ImageData,
+        image: Vec<u8>,
     },
     SendState {
         state: State,
