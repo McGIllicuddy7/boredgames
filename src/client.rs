@@ -1,12 +1,14 @@
-use std::{collections::HashSet, net::TcpStream, process::exit};
+use std::{collections::HashSet, net::TcpStream, process::exit, thread::sleep};
 
-use eframe::egui::{self, Image, ImageSource, Pos2, Rect, Sense, Ui, Vec2};
+use eframe::egui::{self, Color32, Image, ImageSource, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 use local_ip_address::local_ip;
 
 use crate::{
-    communication::*,
-    utils::{self, try_read_object, write_object},
+    communication::*, server::{EXISTS, SHOULD_DIE}, utils::{self, try_read_object, write_object}
 };
+pub enum Layer{
+    Base, Map, Gm,
+}
 pub struct Client {
     pub state: State,
     pub typed_message: String,
@@ -14,6 +16,8 @@ pub struct Client {
     pub username: String,
     pub connection: Option<TcpStream>,
     pub loaded_images: HashSet<String>,
+    pub owns_server:bool,
+    pub working_layer:Layer
 }
 impl Default for Client {
     fn default() -> Self {
@@ -31,6 +35,8 @@ impl Client {
             connection: None,
             username: "root".into(),
             loaded_images: HashSet::new(),
+            owns_server:false,
+            working_layer:Layer::Base
         }
     }
     pub fn update(&mut self, ui: &mut Ui) {
@@ -41,7 +47,7 @@ impl Client {
             },
         );
     }
-    pub fn draw_images(&mut self, ui: &mut Ui) {
+    pub fn draw_images(&mut self,should_log: bool, ui: &mut Ui) {
         let path = path();
         let Ok(f) = std::fs::read_dir(path)else{
             println!("failed to read: {}", path);
@@ -68,34 +74,35 @@ impl Client {
                                     continue;
                                 }
                                 let p2 = Pos2 {
-                                    x: (p.x as i32 / 20 * 20) as f32,
-                                    y: (p.y as i32 / 20 * 20) as f32,
+                                    x: (p.x as i32 / 20 * 20+10) as f32,
+                                    y: (p.y as i32 / 20 * 20+10) as f32,
                                 };
                                 let count = self.state.tokens.len();
                                 let tname = format!("{:#?}_{:#?}", self.username, count);
-                                let fname = format!("file://{}/{}", path,name);
-                                println!("{:#?}, {:#?}", p2, fname);
+                                let fname = format!("file://{}{}", path,name);
+                                if should_log{
+                                    println!("{:#?}, {:#?}", p2, fname);
+                                }                     
                                 let ev = Event {
                                     source: self.username.clone(),
                                     data: EventData::TokenCreated {
                                         name: tname.clone(),
                                         token: Token {
                                             location: p2,
-                                            image: fname.clone(),
+                                            image: name.clone(),
                                         },
                                     },
                                 };
-                                let n = path.to_string()+"/"+&name;
+                                let n = path.to_string()+&name;
                                 let ev0 = Event {
                                     source: self.username.clone(),
-                                    data: EventData::ImageUpload { name:n.clone(), image:std::fs::read(n).unwrap()} 
+                                    data: EventData::ImageUpload { name:name.clone(), image:std::fs::read(n).unwrap()} 
                                 };
                                 if let Some(obj) = self.connection.as_mut() {
-                                    if !self.loaded_images.contains(&fname){
-                                        self.loaded_images.insert(fname);
+                                    if !self.loaded_images.contains(&name){
+                                        self.loaded_images.insert(name);
                                         let _ = write_object(obj, &ev0);
                                     }
-                                   
                                     let _ = write_object(obj, &ev);
                                 }
 
@@ -111,7 +118,7 @@ impl Client {
                 return;
         } 
         let img0 = Image::new(ImageSource::Uri(("file://".to_string()+&name).into()));
-        let maxd = 800.0;
+        let maxd = 810.0;
         ui.place(
             Rect {
                 min: Pos2::new(50.0, 50.0),
@@ -119,6 +126,13 @@ impl Client {
             },
             img0,
         );
+        let p = ui.painter();
+        for i in 1..750/20+1{
+            p.line(vec![Pos2::new((i*20+50) as f32, 50.),Pos2::new((i*20+50) as f32,maxd)], Stroke::new(1.0, Color32::BLACK));
+        }
+        for i in 1..750/20+1{
+            p.line(vec![Pos2::new(50., (i*20+50) as f32),Pos2::new(maxd,(i*20+50) as f32)], Stroke::new(1.0, Color32::BLACK));
+        }
         ui.allocate_rect(
             Rect {
                 min: Pos2::new(50.0, 50.0),
@@ -128,11 +142,11 @@ impl Client {
         );
         for (_name, token) in &mut self.state.tokens {
             //  println!("drew:{_name}");
-            if let Err(e) = std::fs::File::open(token.image.strip_prefix("file://").unwrap()){
+            if let Err(e) = std::fs::File::open(path().to_string()+&token.image){
                 println!("{:#?}:{:#?}", token.image, e);
                 continue;
             }
-            let img = Image::new(ImageSource::Uri(token.image.clone().into()));
+            let img = Image::new(ImageSource::Uri(("file://".to_string()+ path()+&token.image).into()));
             let ar = egui::Area::new(_name.clone().into())
                 .current_pos(Pos2::new(token.location.x, token.location.y))
                 .show(ui.ctx(), move |ui| {
@@ -161,8 +175,8 @@ impl Client {
             }
             if ar.response.drag_stopped() {
                 token.location = Pos2 {
-                    x: ((token.location.x as i32) / 20 * 20) as f32,
-                    y: ((token.location.y as i32) / 20 * 20) as f32,
+                    x: ((token.location.x as i32) / 20 * 20+10) as f32,
+                    y: ((token.location.y as i32) / 20 * 20+10) as f32,
                 };
                 if let Some(c) = self.connection.as_mut() {
                     write_object(
@@ -180,9 +194,30 @@ impl Client {
                 }
             }
         }
+        self.map_controls(false, ui);
+    }
+    pub fn map_controls(&mut self, should_log: bool,ui:&mut Ui){
+        _ = should_log;
+        ui.collapsing("map settings", |ui|{
+            ui.vertical(|ui|{
+                ui.horizontal(|ui|{
+                        ui.label("map name:");
+                        ui.text_edit_singleline(&mut self.state.name)
+                });
+                if ui.button("save").clicked(){
+                    let s = serde_json::to_string_pretty(&self.state).unwrap();
+                    let pth = path().to_string()+&self.state.name;
+                    if !std::fs::exists(&pth).unwrap(){
+                        let _ = std::fs::write(pth, s);
+                    }
+                }
+            });
+
+   
+        });
     }
     pub fn update_actual(&mut self, ui: &mut Ui) {
-        let should_log = false;
+        let should_log =false;
         if let Some(t) = self.connection.as_mut() {
             loop{
                 let tr = try_read_object::<Event>(t, &mut Vec::new());
@@ -193,7 +228,14 @@ impl Client {
                                 std::io::ErrorKind::WouldBlock=>{
                                     break;
                                 }
+                                std::io::ErrorKind::ConnectionReset=>{
+                                    break;
+                                }
+                                std::io::ErrorKind::UnexpectedEof=>{
+                                    break;
+                                }
                                 _=>{
+                                    println!("disconnected {:#?}", t);
                                     self.connection = None;
                                     break;
                                 }
@@ -211,7 +253,9 @@ impl Client {
                             self.state = state;
                         }
                         EventData::ImageUpload { name, image } => {
-                            println!("uploaded:{:#?}", name);
+                            if should_log{
+                                println!("uploaded:{:#?}", name);
+                            }                    
                             let _ = std::fs::create_dir("assets");
                             let e = std::fs::write(&name, &image);
                             if let Err(e) = e{
@@ -219,7 +263,6 @@ impl Client {
                             }
                             //let img = Image::new(ImageSource::Bytes { uri: name.clone().into(), bytes: image.into()});
                             self.loaded_images.insert(name);
-                        
                         }
                         _ => {
                             todo!()
@@ -238,19 +281,34 @@ impl Client {
         let mut username_set = false;
         ui.vertical_centered(|ui| {
             ui.horizontal(|ui| {
-                ui.label("enter ip address:");
+                ui.label("ip address:");
                 ui.text_edit_singleline(&mut self.ip_address);
-                if ui.button("connect").clicked() {
-                    should_connect = true;
-                }
-                if ui.button("host own server").clicked() {
-                    should_host = true;
+                if self.connection.is_none(){
+                    if ui.button("connect").clicked() {
+                        should_connect = true;
+                    }
+                    if ui.button("host own server").clicked() {
+                        should_host = true;
+                    }
+                }else{
+                    if ui.button("disconnect").clicked(){
+                        if self.owns_server{
+                            write_object(&mut self.connection.as_mut().unwrap(), &Event{source:self.username.clone(), data:EventData::Kill{
+                                password:"bridget".into()
+                            }}).unwrap();
+                        }
+                        self.owns_server = false;
+                        self.connection = None;
+                    }
                 }
                 if let Some(s) = self.connection.as_ref() {
                     let e = s.take_error();
                     if e.is_ok() {
                         ui.label("connected");
                     } else {
+                        if should_log{
+                            println!("{:#?}",e);
+                        }               
                         self.connection = None;
                         ui.label("not connected");
                     }
@@ -260,9 +318,13 @@ impl Client {
             });
             ui.horizontal(|ui| {
                 ui.label("username:");
+                let old = self.username.clone();
                 ui.text_edit_singleline(&mut self.username);
                 if ui.button("enter").clicked() {
                     username_set = true;
+                }
+                if let Some(_) = self.connection.as_ref(){
+                    self.username = old;
                 }
                 //ui.label(std::fs::canonicalize(".").unwrap().to_str().unwrap().to_string());
                 //let args:Vec<String> = std::env::args().collect();
@@ -284,7 +346,7 @@ impl Client {
                         });
                     });
                 });
-                self.draw_images(ui);
+                self.draw_images(should_log,ui);
             });
             ui.horizontal(|ui| {
                 ui.label("enter message:");
@@ -297,7 +359,7 @@ impl Client {
                 }
             });
         });
-        if should_connect {
+        if should_connect && self.connection.is_none(){
             if should_log {
                 println!("should connect to:{:#?}", self.ip_address);
             }
@@ -319,6 +381,9 @@ impl Client {
                     },
                 ) {
                     self.ip_address = local_ip().unwrap().to_string() + ":8080";
+                    if should_log{
+                        println!("diconnected");
+                    }
                     self.connection = None;
                 } else {
                     self.connection = Some(con);
@@ -344,6 +409,9 @@ impl Client {
                     println!("should send:{:#}", self.typed_message);
                 }
                 if let Some(con) = self.connection.as_mut() {
+                    if self.typed_message == "\\kill"{
+
+                    }
                     if let Err(a) = utils::write_object(
                         con,
                         &Event {
@@ -367,19 +435,31 @@ impl Client {
             }
         }
         if should_host {
+            EXISTS.store(false, std::sync::atomic::Ordering::Release);
             spawn_host(should_log);
-            if let Ok(mut con) = TcpStream::connect(local_ip().unwrap().to_string() + ":8080") {
-                let _ = write_object(
-                    &mut con,
-                    &Event {
-                        source: self.username.clone(),
-                        data: EventData::Connection {
-                            username: self.username.clone(),
-                        },
-                    },
-                );
-                self.connection = Some(con);
+            while !EXISTS.load(std::sync::atomic::Ordering::Acquire) && !SHOULD_DIE.load(std::sync::atomic::Ordering::Acquire){
             }
+            if !SHOULD_DIE.load(std::sync::atomic::Ordering::Acquire){
+                if let Ok(mut con) = TcpStream::connect(local_ip().unwrap().to_string() + ":8080") {
+                    sleep(std::time::Duration::from_millis(15));
+                    let _ = write_object(
+                        &mut con,
+                        &Event {
+                            source: self.username.clone(),
+                            data: EventData::Connection {
+                                username: self.username.clone(),
+                            },
+                        },
+                    );
+                    self.owns_server = true;
+                    self.connection = Some(con);
+                }else{
+                    if should_log{
+                        println!("failed"); 
+                    }
+                }
+            }
+
         }
     }
 }

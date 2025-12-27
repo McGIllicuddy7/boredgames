@@ -1,11 +1,8 @@
 use std::{
-    collections::HashMap,
-    error::Error,
-    net::{TcpListener, TcpStream},
-    sync::{Arc, Mutex},
-    thread::JoinHandle,
+    collections::HashMap, error::Error, io::ErrorKind, net::{TcpListener, TcpStream}, sync::{Arc, Mutex, atomic::AtomicBool}, thread::JoinHandle
 };
 
+use eframe::egui::Atom;
 use local_ip_address::local_ip;
 
 use crate::communication::*;
@@ -17,6 +14,7 @@ pub struct UserConnection {
 pub struct Server {
     pub clients: HashMap<String, UserConnection>,
     pub new_connections: Arc<Mutex<Vec<TcpStream>>>,
+    pub owner:String
 }
 impl Default for State {
     fn default() -> Self {
@@ -27,11 +25,14 @@ impl Default for State {
 impl State {
     pub fn new() -> Self {
         Self {
+            name:String::new(),
             messages: Vec::new(),
             tokens: HashMap::new(),
         }
     }
 }
+pub static SHOULD_DIE:AtomicBool = AtomicBool::new(false);
+pub static EXISTS:AtomicBool = AtomicBool::new(false);
 impl Server {
     pub fn handle_client(should_log: bool, _name: &String, con: &mut UserConnection) -> Vec<Event> {
         let mut events = Vec::new();
@@ -46,9 +47,11 @@ impl Server {
             events.push(t);
         }
         events
-    }
+    }   
+
     pub fn handle_clients(should_log: bool, mut this: Self, handle: JoinHandle<()>) {
         let mut app_state = State {
+            name:String::new(),
             messages: Vec::new(),
             tokens: HashMap::new(),
         };
@@ -56,6 +59,9 @@ impl Server {
         let mut loaded_images: HashMap<String, Vec<u8>> = HashMap::new();
         let mut uploads = Vec::new();
         'outer: loop {
+            if SHOULD_DIE.load(std::sync::atomic::Ordering::Acquire){
+                break;
+            }
             uploads.clear();
             let mut events = Vec::new();
             for (name, con) in &mut this.clients {
@@ -93,7 +99,10 @@ impl Server {
                     }
                     EventData::Kill { password: _ } => {
                         state_changed = true;
-                        if i.source == "root" {
+                        if should_log{
+                            println!("killed");
+                        }     
+                        if i.source == this.owner {
                             break 'outer;
                         }
                     }
@@ -136,14 +145,31 @@ impl Server {
             };
             let mut read_buf = Vec::new();
             let l = lck.len();
-            for mut i in lck.drain(0..l) {
-                state_changed = true;
-                let Ok(message) = read_object::<Event>(&mut i, &mut read_buf) else {
-                    if should_log {
-                        println!("failed to read");
+            let mut to_recheck = Vec::new();
+            for mut i in lck.drain(0..l){
+                let message ;
+                let e = read_object::<Event>(&mut i, &mut read_buf);
+                 match e{
+                    Ok(ev)=>{
+                        state_changed = true;
+                        message = ev;
                     }
-                    continue;
-                };
+                    Err(e)=>{
+                        if let Ok(e) =  e.downcast::<std::io::Error>(){
+                            match e.kind(){
+                                ErrorKind::WouldBlock=>{
+                                    to_recheck.push(i);
+                                    continue;
+                                }
+                                _=>{
+                                    continue;
+                                }
+                            }
+                            }else{
+                                continue;
+                            }
+                    }
+                }
                 match message.data {
                     EventData::Message {
                         from: _,
@@ -153,6 +179,7 @@ impl Server {
                         continue;
                     }
                     EventData::Connection { username } => {
+                        state_changed = true;
                         if !this.clients.contains_key(&username) {
                             for j in &loaded_images{
                                 let e =  Event {
@@ -163,6 +190,9 @@ impl Server {
                                     }, 
                                 };
                                 let _ = write_object(&mut i, &e);
+                            }
+                            if this.owner == ""{
+                                this.owner = username.clone()
                             }
                             this.clients.insert(
                                 username.clone(),
@@ -204,7 +234,7 @@ impl Server {
                     }
                 }
             }
-            lck.clear();
+            *lck = to_recheck;
             drop(lck);
             if state_changed {
                 for i in &mut this.clients {
@@ -236,30 +266,46 @@ impl Server {
                 }
             }
         }
+        println!("died");
+        SHOULD_DIE.store(true, std::sync::atomic::Ordering::Release);
         drop(this);
         let _ = handle.join();
     }
     pub fn accept_clients(should_log: bool, list: Arc<Mutex<Vec<TcpStream>>>) {
         let Ok(stream) = TcpListener::bind(local_ip().unwrap().to_string() + ":8080") else {
+            EXISTS.store(true, std::sync::atomic::Ordering::Release);
+            SHOULD_DIE.store(true, std::sync::atomic::Ordering::Release);
             println!("failed to create");
             return;
         };
-        for i in stream.incoming().flatten() {
-            if should_log {
-                println!("accepted");
+        stream.set_nonblocking(true).unwrap();
+        EXISTS.store(true, std::sync::atomic::Ordering::Release);
+        loop {
+            if SHOULD_DIE.load(std::sync::atomic::Ordering::Acquire){
+                println!("should die");
+                break;
             }
-            let lsck = list.lock();
-            let mut lock = match lsck {
-                Ok(l) => l,
-                Err(l) => l.into_inner(),
-            };
-            lock.push(i);
-            drop(lock);
+            if let Ok((i,_)) =stream.accept() {
+                if should_log {
+                    println!("accepted");
+                }
+                let lsck = list.lock();
+                let mut lock = match lsck {
+                    Ok(l) => l,
+                    Err(l) => l.into_inner(),
+                };
+                lock.push(i);
+                drop(lock);
+            }
         }
+        println!("died");
+        EXISTS.store(false, std::sync::atomic::Ordering::Release);
     }
-    pub fn serve(should_log: bool) {
+    pub fn serve(should_log: bool){
+        SHOULD_DIE.store(false, std::sync::atomic::Ordering::Release);
         let server = Server {
             clients: HashMap::new(),
+            owner:String::new(),
             new_connections: Arc::new(Mutex::new(Vec::new())),
         };
         let connects = server.new_connections.clone();

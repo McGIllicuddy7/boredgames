@@ -11,6 +11,7 @@ pub struct Token {
 pub struct State {
     pub messages: Vec<(String, String)>,
     pub tokens: HashMap<String, Token>,
+    pub name:String,
 }
 #[derive(Serialize, Deserialize, Clone)]
 pub enum EventData {
