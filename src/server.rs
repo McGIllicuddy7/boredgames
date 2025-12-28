@@ -1,9 +1,11 @@
 use std::{
-    collections::HashMap, error::Error, io::ErrorKind, net::{TcpListener, TcpStream}, sync::{Arc, Mutex, atomic::AtomicBool}, thread::JoinHandle
+    collections::HashMap,
+    error::Error,
+    io::ErrorKind,
+    net::{TcpListener, TcpStream},
+    sync::{Arc, Mutex, atomic::AtomicBool},
+    thread::JoinHandle,
 };
-
-use eframe::egui::Atom;
-use local_ip_address::local_ip;
 
 use crate::communication::*;
 use crate::utils::{read_object, try_read_object, write_object};
@@ -14,7 +16,7 @@ pub struct UserConnection {
 pub struct Server {
     pub clients: HashMap<String, UserConnection>,
     pub new_connections: Arc<Mutex<Vec<TcpStream>>>,
-    pub owner:String
+    pub owner: String,
 }
 impl Default for State {
     fn default() -> Self {
@@ -25,14 +27,16 @@ impl Default for State {
 impl State {
     pub fn new() -> Self {
         Self {
-            name:String::new(),
+            name: String::new(),
             messages: Vec::new(),
             tokens: HashMap::new(),
+            map: HashMap::new(),
+            gm: HashMap::new(),
         }
     }
 }
-pub static SHOULD_DIE:AtomicBool = AtomicBool::new(false);
-pub static EXISTS:AtomicBool = AtomicBool::new(false);
+pub static SHOULD_DIE: AtomicBool = AtomicBool::new(false);
+pub static EXISTS: AtomicBool = AtomicBool::new(false);
 impl Server {
     pub fn handle_client(should_log: bool, _name: &String, con: &mut UserConnection) -> Vec<Event> {
         let mut events = Vec::new();
@@ -47,19 +51,21 @@ impl Server {
             events.push(t);
         }
         events
-    }   
+    }
 
     pub fn handle_clients(should_log: bool, mut this: Self, handle: JoinHandle<()>) {
         let mut app_state = State {
-            name:String::new(),
+            name: String::new(),
             messages: Vec::new(),
             tokens: HashMap::new(),
+            map: HashMap::new(),
+            gm: HashMap::new(),
         };
         let mut state_changed;
         let mut loaded_images: HashMap<String, Vec<u8>> = HashMap::new();
         let mut uploads = Vec::new();
         'outer: loop {
-            if SHOULD_DIE.load(std::sync::atomic::Ordering::Acquire){
+            if SHOULD_DIE.load(std::sync::atomic::Ordering::Acquire) {
                 break;
             }
             uploads.clear();
@@ -99,9 +105,9 @@ impl Server {
                     }
                     EventData::Kill { password: _ } => {
                         state_changed = true;
-                        if should_log{
+                        if should_log {
                             println!("killed");
-                        }     
+                        }
                         if i.source == this.owner {
                             break 'outer;
                         }
@@ -112,30 +118,57 @@ impl Server {
                     EventData::ImageUpload { name, image } => {
                         state_changed = true;
                         uploads.push(name.clone());
-                        let _ = std::fs::write(&name, &image);
+                        let _ = std::fs::write(path().to_string() + &name, &image);
                         loaded_images.insert(name, image);
                     }
                     EventData::TokenMoved {
                         name,
                         to,
                         time_stamp: _,
+                        layer,
                     } => {
                         state_changed = true;
                         if let Some(t) = app_state.tokens.get_mut(&name) {
-                            t.location = to;
+                            *t = to.clone();
+                        }
+                        if let Some(t) = app_state.map.get_mut(&name) {
+                            *t = to.clone();
+                        }
+                        if let Some(t) = app_state.gm.get_mut(&name) {
+                            *t = to.clone();
                         }
                     }
                     EventData::SendState { state } => {
                         state_changed = true;
                         app_state = state;
                     }
-                    EventData::TokenDestroyed { name } => {
+                    EventData::TokenDestroyed { name, layer } => {
                         state_changed = true;
+                        app_state.map.remove(&name);
                         app_state.tokens.remove(&name);
+                        app_state.gm.remove(&name);
                     }
-                    EventData::TokenCreated { name, token } => {
+                    EventData::TokenCreated { name, token, layer } => {
                         state_changed = true;
-                        app_state.tokens.insert(name, token);
+                        if !app_state.map.contains_key(&name)
+                            && !app_state.gm.contains_key(&name)
+                            && !app_state.tokens.contains_key(&name)
+                        {
+                            match layer {
+                                Layer::Base => {
+                                    app_state.tokens.insert(name, token);
+                                }
+                                Layer::Map => {
+                                    app_state.map.insert(name, token);
+                                }
+                                Layer::Gm => {
+                                    app_state.gm.insert(name, token);
+                                }
+                            }
+                        }
+                    }
+                    EventData::PersonalUpdate { people: _ } => {
+                        continue;
                     }
                 }
             }
@@ -146,28 +179,28 @@ impl Server {
             let mut read_buf = Vec::new();
             let l = lck.len();
             let mut to_recheck = Vec::new();
-            for mut i in lck.drain(0..l){
-                let message ;
+            for mut i in lck.drain(0..l) {
+                let message;
                 let e = read_object::<Event>(&mut i, &mut read_buf);
-                 match e{
-                    Ok(ev)=>{
+                match e {
+                    Ok(ev) => {
                         state_changed = true;
                         message = ev;
                     }
-                    Err(e)=>{
-                        if let Ok(e) =  e.downcast::<std::io::Error>(){
-                            match e.kind(){
-                                ErrorKind::WouldBlock=>{
+                    Err(e) => {
+                        if let Ok(e) = e.downcast::<std::io::Error>() {
+                            match e.kind() {
+                                ErrorKind::WouldBlock => {
                                     to_recheck.push(i);
                                     continue;
                                 }
-                                _=>{
+                                _ => {
                                     continue;
                                 }
                             }
-                            }else{
-                                continue;
-                            }
+                        } else {
+                            continue;
+                        }
                     }
                 }
                 match message.data {
@@ -181,17 +214,17 @@ impl Server {
                     EventData::Connection { username } => {
                         state_changed = true;
                         if !this.clients.contains_key(&username) {
-                            for j in &loaded_images{
-                                let e =  Event {
+                            for j in &loaded_images {
+                                let e = Event {
                                     source: "_server".into(),
                                     data: EventData::ImageUpload {
                                         name: j.0.clone(),
                                         image: j.1.clone(),
-                                    }, 
+                                    },
                                 };
                                 let _ = write_object(&mut i, &e);
                             }
-                            if this.owner == ""{
+                            if this.owner == "" {
                                 this.owner = username.clone()
                             }
                             this.clients.insert(
@@ -201,7 +234,6 @@ impl Server {
                                     stream: i,
                                 },
                             );
-
                         }
                     }
                     EventData::Disconnection { username: _ } => {
@@ -220,16 +252,24 @@ impl Server {
                         name: _,
                         to: _,
                         time_stamp: _,
+                        layer: _,
                     } => {
                         continue;
                     }
                     EventData::SendState { state: _ } => {
                         continue;
                     }
-                    EventData::TokenDestroyed { name: _ } => {
+                    EventData::TokenDestroyed { name: _, layer: _ } => {
                         continue;
                     }
-                    EventData::TokenCreated { name: _, token: _ } => {
+                    EventData::TokenCreated {
+                        name: _,
+                        token: _,
+                        layer: _,
+                    } => {
+                        continue;
+                    }
+                    EventData::PersonalUpdate { people: _ } => {
                         continue;
                     }
                 }
@@ -237,6 +277,9 @@ impl Server {
             *lck = to_recheck;
             drop(lck);
             if state_changed {
+                let mut people: Vec<String> =
+                    this.clients.iter().map(|(i, _)| i.to_owned()).collect();
+                people.sort_unstable();
                 for i in &mut this.clients {
                     let _ = write_object(
                         &mut i.1.stream,
@@ -247,21 +290,28 @@ impl Server {
                             },
                         },
                     );
+
+                    let _ = write_object(
+                        &mut i.1.stream,
+                        &Event {
+                            source: "_server".into(),
+                            data: EventData::PersonalUpdate {
+                                people: people.clone(),
+                            },
+                        },
+                    );
                 }
                 for j in &uploads {
-                    let e =  Event {
-                                source: "_server".into(),
-                                data: EventData::ImageUpload {
-                                    name: j.clone(),
-                                    image: loaded_images[j].clone(),
-                                },
-                            };
+                    let e = Event {
+                        source: "_server".into(),
+                        data: EventData::ImageUpload {
+                            name: j.clone(),
+                            image: loaded_images[j].clone(),
+                        },
+                    };
 
                     for i in &mut this.clients {
-                        let _ = write_object(
-                            &mut i.1.stream,
-                            &e
-                        );
+                        let _ = write_object(&mut i.1.stream, &e);
                     }
                 }
             }
@@ -272,7 +322,8 @@ impl Server {
         let _ = handle.join();
     }
     pub fn accept_clients(should_log: bool, list: Arc<Mutex<Vec<TcpStream>>>) {
-        let Ok(stream) = TcpListener::bind(local_ip().unwrap().to_string() + ":8080") else {
+        let ip = get_ip();
+        let Ok(stream) = TcpListener::bind(ip + ":8080") else {
             EXISTS.store(true, std::sync::atomic::Ordering::Release);
             SHOULD_DIE.store(true, std::sync::atomic::Ordering::Release);
             println!("failed to create");
@@ -281,11 +332,11 @@ impl Server {
         stream.set_nonblocking(true).unwrap();
         EXISTS.store(true, std::sync::atomic::Ordering::Release);
         loop {
-            if SHOULD_DIE.load(std::sync::atomic::Ordering::Acquire){
+            if SHOULD_DIE.load(std::sync::atomic::Ordering::Acquire) {
                 println!("should die");
                 break;
             }
-            if let Ok((i,_)) =stream.accept() {
+            if let Ok((i, _)) = stream.accept() {
                 if should_log {
                     println!("accepted");
                 }
@@ -301,11 +352,11 @@ impl Server {
         println!("died");
         EXISTS.store(false, std::sync::atomic::Ordering::Release);
     }
-    pub fn serve(should_log: bool){
+    pub fn serve(should_log: bool) {
         SHOULD_DIE.store(false, std::sync::atomic::Ordering::Release);
         let server = Server {
             clients: HashMap::new(),
-            owner:String::new(),
+            owner: String::new(),
             new_connections: Arc::new(Mutex::new(Vec::new())),
         };
         let connects = server.new_connections.clone();

@@ -7,4 +7,3 @@ pub struct DataBase {
     pub alias_table: HashMap<String, IpAddr>,
     pub folder: String,
 }
-

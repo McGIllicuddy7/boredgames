@@ -19,3 +19,6 @@ identifier = "com.mcgillicuddy7.boredgames"
 strip = true
 opt-level = "z"
 lto = true
+panic = "abort"
+codegen-units = 1
+cflags = ["link-args=-static"]

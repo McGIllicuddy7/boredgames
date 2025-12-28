@@ -97,7 +97,7 @@ pub fn read_object<'a, T: Deserialize<'a>>(
     stream: &mut TcpStream,
     buffer: &'a mut Vec<u8>,
 ) -> throws!(T) {
-    let _=  stream.set_nonblocking(false);
+    let _ = stream.set_nonblocking(false);
     let mut buff = [0; 8];
     stream.read_exact(&mut buff)?;
     let size = u64::from_le_bytes(buff);
@@ -140,7 +140,7 @@ pub fn try_read_object<'a, T: Deserialize<'a>>(
 }
 
 pub fn write_object<T: Serialize>(stream: &mut TcpStream, v: &T) -> throws!() {
-   let _=  stream.set_nonblocking(false);
+    let _ = stream.set_nonblocking(false);
     let s = serde_json::to_string(v)?;
     let size: [u8; 8] = u64::to_ne_bytes((s.len() as u64).to_le());
     stream.write(&size)?;
