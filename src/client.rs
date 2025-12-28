@@ -1,4 +1,4 @@
-use std::{collections::HashSet, net::TcpStream, process::exit, thread::sleep};
+use std::{collections::HashSet, net::TcpStream, net::SocketAddr, process::exit, thread::sleep};
 
 use eframe::egui::{self, Color32, Image, ImageSource, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 use local_ip_address::local_ip;
@@ -257,7 +257,7 @@ impl Client {
                                 println!("uploaded:{:#?}", name);
                             }                    
                             let _ = std::fs::create_dir("assets");
-                            let e = std::fs::write(&name, &image);
+                            let e = std::fs::write(path().to_string()+&name, &image);
                             if let Err(e) = e{
                                 println!("{:#?}",e);
                             }
@@ -363,7 +363,8 @@ impl Client {
             if should_log {
                 println!("should connect to:{:#?}", self.ip_address);
             }
-            if let Ok(mut con) = TcpStream::connect(&self.ip_address) {
+            let addr =SocketAddr::new(self.ip_address.strip_suffix(":8080").unwrap().parse().unwrap(), 8080);
+            if let Ok(mut con) = TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(3)) {
                 let _ = write_object(
                     &mut con,
                     &Event {
