@@ -3,7 +3,7 @@ name = "boredgames"
 version = "0.1.0"
 edition = "2024"
 authors = ["Bridget Hartin Pasco isaacpasco@icloud.com"]
-identifier = "com.mcgillicuddy7.boredgames"
+
 [dependencies]
 eframe = {version = "0.32.3", features = ["serde"]}
 egui_extras = {version = "0.32.3", features = ["all_loaders", "serde"]}
@@ -17,3 +17,11 @@ serde_json = "1.0.147"
 #linker = "x86_64-w64-mingw32-gcc"
 rustflags = ["-C", "target-feature=+crt-static","-I/usr/local/include/"]
 
+
+[package.metadata.bundle]
+identifier = "com.mcgillicuddy7.boredgames"
+
+[profile.release]
+strip = true
+opt-level = "z"
+lto = true
