@@ -3,7 +3,7 @@ name = "boredgames"
 version = "0.1.0"
 edition = "2024"
 authors = ["Bridget Hartin Pasco isaacpasco@icloud.com"]
-
+identifier = "com.mcgillicuddy7.boredgames"
 [dependencies]
 eframe = {version = "0.32.3", features = ["serde"]}
 egui_extras = {version = "0.32.3", features = ["all_loaders", "serde"]}
