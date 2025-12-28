@@ -12,12 +12,6 @@ local-ip-address = "0.6.8"
 serde = {version = "1.0.228" ,features = ["derive"]}
 serde_json = "1.0.147"
 
-
-[target.x86_64-pc-windows-msvc]
-#linker = "x86_64-w64-mingw32-gcc"
-rustflags = ["-C", "target-feature=+crt-static","-I/usr/local/include/"]
-
-
 [package.metadata.bundle]
 identifier = "com.mcgillicuddy7.boredgames"
 
