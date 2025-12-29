@@ -1,27 +1,35 @@
 use std::{collections::HashMap, sync::LazyLock};
 
-use eframe::egui::Pos2;
+use eframe::egui::{Pos2, Vec2};
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Token {
     pub location: Pos2,
-    pub scale: i32,
+    pub scale: Vec2,
     pub image: String,
     pub display_name: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-pub enum Layer {
+pub enum LayerType {
     Base,
     Map,
     Gm,
 }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Layer{
+   pub tokens:HashMap<String, Token>, 
+
+}
+
+
+
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct State {
     pub messages: Vec<(String, String)>,
-    pub tokens: HashMap<String, Token>,
-    pub map: HashMap<String, Token>,
-    pub gm: HashMap<String, Token>,
+    pub tokens: Layer,
+    pub map: Layer,
+    pub gm: Layer,
     pub name: String,
 }
 #[derive(Serialize, Deserialize, Clone)]
@@ -44,16 +52,16 @@ pub enum EventData {
         name: String,
         to: Token,
         time_stamp: i32,
-        layer: Layer,
+        layer: LayerType,
     },
     TokenCreated {
         name: String,
         token: Token,
-        layer: Layer,
+        layer: LayerType,
     },
     TokenDestroyed {
         name: String,
-        layer: Layer,
+        layer: LayerType,
     },
     ImageUpload {
         name: String,
@@ -66,6 +74,17 @@ pub enum EventData {
         people: Vec<String>,
     },
     HeartBeat,
+}
+impl Default for Layer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Layer{
+    pub fn new()->Self{
+        Self { tokens: HashMap::new() }
+    }
 }
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Event {
@@ -88,10 +107,10 @@ pub fn path() -> &'static str {
     &S
 }
 pub fn get_ip() -> String {
-    let ip = if let Ok(t) = local_ip_address::local_ip() {
+    
+    if let Ok(t) = local_ip_address::local_ip() {
         t.to_string()
     } else {
         "127.0.0.1".to_string()
-    };
-    ip
+    }
 }

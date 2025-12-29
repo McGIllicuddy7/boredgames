@@ -1,4 +1,4 @@
-use eframe::egui::{self, Color32, Image, ImageSource, Pos2, Rect, Sense, Stroke, Ui, Vec2};
+use eframe::egui::{self, Area, Color32, Image, ImageSource, Layout, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 use local_ip_address::local_ip;
 use std::{collections::HashSet, net::SocketAddr, net::TcpStream, process::exit, thread::sleep};
 
@@ -12,6 +12,12 @@ pub enum Mode {
     MoveAndPlace,
     Measure,
     Draw,
+    DrawBox, 
+    Text,
+}
+pub struct SelectionState{
+    pub selected_object:Option<String>,
+    pub selected_group:HashSet<String>,
 }
 pub struct Client {
     pub state: State,
@@ -22,8 +28,9 @@ pub struct Client {
     pub loaded_images: HashSet<String>,
     pub people: Vec<String>,
     pub owns_server: bool,
-    pub working_layer: Layer,
+    pub working_layer: LayerType,
     pub mode: Mode,
+    pub selection:SelectionState
 }
 impl Default for Client {
     fn default() -> Self {
@@ -43,8 +50,9 @@ impl Client {
             loaded_images: HashSet::new(),
             owns_server: false,
             people: Vec::new(),
-            working_layer: Layer::Base,
+            working_layer: LayerType::Base,
             mode: Mode::MoveAndPlace,
+            selection:SelectionState { selected_object: None, selected_group:HashSet::new() }
         };
         if let Ok(p) = std::fs::read_dir(path()) {
             let s = p
@@ -99,9 +107,9 @@ impl Client {
                                 x: (p.x as i32 / 20 * 20) as f32,
                                 y: (p.y as i32 / 20 * 20) as f32,
                             };
-                            let count = self.state.tokens.len()
-                                + self.state.map.len()
-                                + self.state.gm.len();
+                            let count = self.state.tokens.tokens.len()
+                                + self.state.map.tokens.len()
+                                + self.state.gm.tokens.len();
                             let tname = format!("{:#?}_{:#?}", self.username, count);
                             let fname = format!("file://{}{}", path, name);
                             if should_log {
@@ -114,7 +122,7 @@ impl Client {
                                     token: Token {
                                         location: p2,
                                         image: name.clone(),
-                                        scale: 1,
+                                        scale: Vec2::new(1.0, 1.0),
                                         display_name: String::new(),
                                     },
                                     layer: self.working_layer.clone(),
@@ -141,16 +149,19 @@ impl Client {
             }
         });
     }
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_layer(
         mutable: bool,
         ui: &mut Ui,
-        values: &mut std::collections::HashMap<String, Token>,
+        values: &mut Layer,
         maxd: f32,
         connection: &mut Option<TcpStream>,
         username: String,
-        layer: Layer,
+        layer: LayerType,
+        opacity:f32,
+        selection:&mut SelectionState,
     ) {
-        for (name, token) in values {
+        for (name, token) in &mut values.tokens {
             if let Err(e) = std::fs::File::open(path().to_string() + &token.image) {
                 println!("{:#?}:{:#?}", token.image, e);
                 continue;
@@ -158,28 +169,70 @@ impl Client {
             let img = Image::new(ImageSource::Uri(
                 ("file://".to_string() + path() + &token.image).into(),
             ));
-            let scale = token.scale as f32;
-            let changed = false;
+            let scale = token.scale;
+            let mut changed = false;
             let ar = if mutable {
-                let ar = egui::Area::new(name.clone().into())
+                egui::Area::new(name.clone().into()).sense(Sense::all())
                     .current_pos(Pos2::new(token.location.x, token.location.y))
                     .show(ui.ctx(), |ui| {
-                        let img2 = img.fit_to_exact_size(Vec2::new(20.0 * scale, 20.0 * scale));
-                        ui.add(img2);
-                        ui.small(&token.display_name);
-                    });
-                ar
+                            let img2 = img.fit_to_exact_size(Vec2::new(20.0 * scale.x, 20.0 * scale.y));
+                            ui.set_opacity(opacity);
+                            ui.add(img2); 
+                    })
             } else {
-                let ar = egui::Area::new(name.clone().into())
+                egui::Area::new(name.clone().into())
                     .current_pos(Pos2::new(token.location.x, token.location.y))
                     .sense(Sense::empty())
                     .show(ui.ctx(), |ui| {
-                        let img2 = img.fit_to_exact_size(Vec2::new(20.0 * scale, 20.0 * scale));
+                        let img2 = img.fit_to_exact_size(Vec2::new(20.0 * scale.x, 20.0 * scale.y));
+                        ui.set_opacity(opacity);
                         ui.add(img2);
-                        ui.small(&token.display_name);
-                    });
-                ar
+                    })
             };
+            if ar.response.secondary_clicked() || selection.selected_object.clone().is_some_and(|a| {&a == name}){
+                let _ = egui::Area::new((name.clone()+"_edit").into()).current_pos((token.location.to_vec2()+ Vec2::new(0.0, 20.0*scale.y)).to_pos2()).default_width(20.0).show(ui.ctx(), |ui|{
+                    selection.selected_object = Some(name.clone());
+                    let _= ui.group(|ui|{
+                        ui.set_max_width(80.0);
+                        ui.horizontal(|ui|{    
+                        if ui.button("delete").clicked(){
+                            if let Some(t) = connection.as_mut(){
+                                let ev = Event{source:username.clone(), data:EventData::TokenDestroyed { name: name.clone(), layer:layer.clone() }};
+                                let _ = write_object(t, &ev);
+                            }
+                        }
+
+                        let tmp = ui.text_edit_singleline(&mut token.display_name);
+                            if ui.button("x").clicked() || tmp.lost_focus(){
+                                changed = true;
+                                selection.selected_object = None;
+                            }
+                            
+                        });
+                        let s = (token.scale.x+token.scale.y)/2.0;
+                        let mut idx = s as i32;
+                        ui.horizontal(|ui|{
+                            ui.label("scale:");
+                            ui.add(egui::Slider::new(&mut idx, 1..=40));
+                            if idx != s as i32{
+                                changed = true;
+                                token.scale.x = idx as f32;
+                                token.scale.y = idx as f32;
+                            }
+                            if ui.button("fill").clicked(){
+                                changed= true;
+                                token.scale.x= 40.;
+                                token.scale.y = 40.;
+                            }
+                        });
+                    });
+                });
+            }else{
+                selection.selected_object = None;
+                let _ = egui::Area::new((name.clone()+"_edit").into()).current_pos((token.location.to_vec2()+ Vec2::new(0.0, 20.0*scale.y)).to_pos2()).default_width(40.0).show(ui.ctx(), |ui|{
+                    ui.small(&token.display_name)
+                }); 
+            }
             if ar.response.dragged() {
                 let mut r =
                     Pos2::new(token.location.x, token.location.y) + ar.response.drag_delta();
@@ -218,14 +271,16 @@ impl Client {
                     .unwrap();
                 }
             }
+            //ar.response.interact(sense)
         }
+
     }
     pub fn draw_map(&mut self, ui: &mut Ui) {
         let name = path().to_string() + "board.png";
         if std::fs::File::open(&name).is_err() {
             return;
         }
-        let maxd = 860.0;
+        let maxd = 900.0;
         let p = ui.painter();
         p.rect_filled(
             Rect {
@@ -235,7 +290,7 @@ impl Client {
             0.0,
             Color32::WHITE,
         );
-        for i in 1..750 / 20 + 1 {
+        for i in 1..800 / 20 + 1 {
             p.line(
                 vec![
                     Pos2::new((i * 20 + 100) as f32, 100.),
@@ -244,7 +299,7 @@ impl Client {
                 Stroke::new(1.0, Color32::BLACK),
             );
         }
-        for i in 1..750 / 20 + 1 {
+        for i in 1..800 / 20 + 1 {
             p.line(
                 vec![
                     Pos2::new(100., (i * 20 + 100) as f32),
@@ -261,62 +316,95 @@ impl Client {
             Sense::empty(),
         );
         Self::draw_layer(
-            self.working_layer == Layer::Map && self.mode == Mode::MoveAndPlace,
+            self.working_layer == LayerType::Map && self.mode == Mode::MoveAndPlace,
             ui,
             &mut self.state.map,
             maxd,
             &mut self.connection,
             self.username.clone(),
-            Layer::Map,
+            LayerType::Map,
+            1.0,
+            &mut self.selection,
         );
-        if self.working_layer != Layer::Base {
-            ui.scope(|ui| {
-                ui.set_opacity(0.9);
+        if self.working_layer != LayerType::Base {
                 Self::draw_layer(
-                    self.working_layer == Layer::Base && self.mode == Mode::MoveAndPlace,
+                    self.working_layer == LayerType::Base && self.mode == Mode::MoveAndPlace,
                     ui,
-                    &mut self.state.gm,
+                    &mut self.state.tokens,
                     maxd,
                     &mut self.connection,
                     self.username.clone(),
-                    Layer::Base,
-                );
-            });
+                    LayerType::Base,
+                    0.5,
+                    &mut self.selection
+                )
         } else {
             Self::draw_layer(
-                self.working_layer == Layer::Base && self.mode == Mode::MoveAndPlace,
+                self.working_layer == LayerType::Base && self.mode == Mode::MoveAndPlace,
                 ui,
                 &mut self.state.tokens,
                 maxd,
                 &mut self.connection,
                 self.username.clone(),
-                Layer::Base,
+                LayerType::Base,
+                1.0, 
+                &mut self.selection
             );
         }
-        if self.working_layer != Layer::Gm {
-            ui.scope(|ui| {
-                //ui.set_opacity(0.5);
+        if self.working_layer != LayerType::Gm {
                 Self::draw_layer(
-                    self.working_layer == Layer::Gm && self.mode == Mode::MoveAndPlace,
+                    self.working_layer == LayerType::Gm && self.mode == Mode::MoveAndPlace,
                     ui,
                     &mut self.state.gm,
                     maxd,
                     &mut self.connection,
                     self.username.clone(),
-                    Layer::Gm,
+                    LayerType::Gm,
+                    0.3, 
+                    &mut self.selection
                 );
-            });
         } else {
             Self::draw_layer(
-                self.working_layer == Layer::Gm && self.mode == Mode::MoveAndPlace,
+                self.working_layer == LayerType::Gm && self.mode == Mode::MoveAndPlace,
                 ui,
                 &mut self.state.gm,
                 maxd,
                 &mut self.connection,
                 self.username.clone(),
-                Layer::Gm,
+                LayerType::Gm,
+                1.0, 
+                &mut self.selection
             );
         }
+        match self.mode{
+            Mode::MoveAndPlace=>{
+
+            }
+            Mode::Draw=>{
+                self.handle_drawing();
+            }
+            Mode::DrawBox=>{
+                self.handle_box_drawing();
+            }
+            Mode::Measure=>{
+                self.handle_measuring();
+            }
+            Mode::Text=>{
+                self.handle_text();
+            }
+        }
+    }
+    pub fn handle_drawing(&mut self){
+
+    }
+    pub fn handle_box_drawing(&mut self){
+
+    }
+    pub fn handle_measuring(&mut self){
+
+    }
+    pub fn handle_text(&mut self){
+
     }
     pub fn map_controls(&mut self, should_log: bool, ui: &mut Ui) {
         _ = should_log;
@@ -352,23 +440,21 @@ impl Client {
                 if ui.button("host own server").clicked() {
                     *should_host = true;
                 }
-            } else {
-                if ui.button("disconnect").clicked() {
-                    if self.owns_server {
-                        write_object(
-                            &mut self.connection.as_mut().unwrap(),
-                            &Event {
-                                source: self.username.clone(),
-                                data: EventData::Kill {
-                                    password: "bridget".into(),
-                                },
+            } else if ui.button("disconnect").clicked() {
+                if self.owns_server {
+                    write_object(
+                        self.connection.as_mut().unwrap(),
+                        &Event {
+                            source: self.username.clone(),
+                            data: EventData::Kill {
+                                password: "bridget".into(),
                             },
-                        )
-                        .unwrap();
-                    }
-                    self.owns_server = false;
-                    self.connection = None;
+                        },
+                    )
+                    .unwrap();
                 }
+                self.owns_server = false;
+                self.connection = None;
             }
             if let Some(s) = self.connection.as_ref() {
                 let e = s.take_error();
@@ -392,7 +478,7 @@ impl Client {
             if ui.button("enter").clicked() {
                 *username_set = true;
             }
-            if let Some(_) = self.connection.as_ref() {
+            if self.connection.as_ref().is_some() {
                 self.username = old;
             }
         });
@@ -402,8 +488,8 @@ impl Client {
             loop {
                 let tr = try_read_object::<Event>(t, &mut Vec::new());
                 if tr.is_err() {
-                    if let Err(e) = tr {
-                        if let Ok(t) = e.downcast::<std::io::Error>() {
+                    if let Err(e) = tr
+                        && let Ok(t) = e.downcast::<std::io::Error>() {
                             match t.kind() {
                                 std::io::ErrorKind::WouldBlock => {
                                     break;
@@ -421,7 +507,6 @@ impl Client {
                                 }
                             }
                         }
-                    }
                     break;
                 }
                 let Ok(ev) = tr else {
@@ -462,29 +547,25 @@ impl Client {
     pub fn map_switching(&mut self, ui: &mut Ui) {
         ui.vertical(|ui| {
             let files = std::fs::read_dir(path()).unwrap();
-            for i in files {
-                if let Ok(p) = i {
-                    let name = p.file_name().to_str().unwrap().to_string();
-                    if let Some(n) = name.strip_suffix(".bored") {
-                        if ui.button(n).clicked() {
-                            let Ok(s) = std::fs::read_to_string(path().to_string() + &name) else {
-                                continue;
-                            };
-                            let res_state: Result<State, _> = serde_json::from_str(&s);
-                            if let Ok(s) = res_state {
-                                if let Some(t) = self.connection.as_mut() {
-                                    let _ = write_object(
-                                        t,
-                                        &Event {
-                                            source: self.username.clone(),
-                                            data: EventData::SendState { state: s },
-                                        },
-                                    );
-                                }
+            for p in files.flatten() {
+                let name = p.file_name().to_str().unwrap().to_string();
+                if let Some(n) = name.strip_suffix(".bored")
+                    && ui.button(n).clicked() {
+                        let Ok(s) = std::fs::read_to_string(path().to_string() + &name) else {
+                            continue;
+                        };
+                        let res_state: Result<State, _> = serde_json::from_str(&s);
+                        if let Ok(s) = res_state
+                            && let Some(t) = self.connection.as_mut() {
+                                let _ = write_object(
+                                    t,
+                                    &Event {
+                                        source: self.username.clone(),
+                                        data: EventData::SendState { state: s },
+                                    },
+                                );
                             }
-                        }
                     }
-                }
             }
         });
     }
@@ -508,13 +589,13 @@ impl Client {
             ui.group(|ui| {
                 ui.label("change mode:");
                 if ui.button("tokens").clicked() {
-                    self.working_layer = Layer::Base;
+                    self.working_layer = LayerType::Base;
                 }
                 if ui.button("map").clicked() {
-                    self.working_layer = Layer::Map;
+                    self.working_layer = LayerType::Map;
                 }
                 if ui.button("gm").clicked() {
-                    self.working_layer = Layer::Gm;
+                    self.working_layer = LayerType::Gm;
                 }
             });
             ui.group(|ui| {
@@ -525,8 +606,14 @@ impl Client {
                 if ui.button("measure").clicked() {
                     self.mode = Mode::Measure;
                 }
+                if ui.button("text").clicked(){
+                    self.mode = Mode::Text;
+                }
                 if ui.button("draw").clicked() {
                     self.mode = Mode::Draw;
+                }
+                if ui.button("draw box").clicked(){
+                    self.mode = Mode::DrawBox
                 }
             });
         });
@@ -605,13 +692,13 @@ impl Client {
                         },
                     },
                 );
-                if let Err(_) = write_object(
+                if write_object(
                     &mut con,
                     &Event {
                         source: self.username.clone(),
                         data: EventData::HeartBeat,
                     },
-                ) {
+                ).is_err() {
                     self.ip_address = local_ip().unwrap().to_string() + ":8080";
                     if should_log {
                         println!("diconnected");
@@ -681,7 +768,7 @@ impl Client {
             spawn_host(should_log);
             while !EXISTS.load(std::sync::atomic::Ordering::Acquire)
                 && !SHOULD_DIE.load(std::sync::atomic::Ordering::Acquire)
-            {}
+            { std::hint::spin_loop() }
             if !SHOULD_DIE.load(std::sync::atomic::Ordering::Acquire) {
                 if let Ok(mut con) = TcpStream::connect(get_ip() + ":8080") {
                     sleep(std::time::Duration::from_millis(15));
@@ -696,10 +783,8 @@ impl Client {
                     );
                     self.owns_server = true;
                     self.connection = Some(con);
-                } else {
-                    if should_log {
-                        println!("failed");
-                    }
+                } else if should_log {
+                    println!("failed");
                 }
             }
         }

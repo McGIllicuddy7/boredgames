@@ -29,9 +29,9 @@ impl State {
         Self {
             name: String::new(),
             messages: Vec::new(),
-            tokens: HashMap::new(),
-            map: HashMap::new(),
-            gm: HashMap::new(),
+            tokens: Layer::new(),
+            map: Layer::new(),
+            gm: Layer::new(),
         }
     }
 }
@@ -57,9 +57,9 @@ impl Server {
         let mut app_state = State {
             name: String::new(),
             messages: Vec::new(),
-            tokens: HashMap::new(),
-            map: HashMap::new(),
-            gm: HashMap::new(),
+            tokens: Layer::new(),
+            map: Layer::new(),
+            gm: Layer::new(),
         };
         let mut state_changed;
         let mut loaded_images: HashMap<String, Vec<u8>> = HashMap::new();
@@ -125,16 +125,16 @@ impl Server {
                         name,
                         to,
                         time_stamp: _,
-                        layer,
+                        layer: _,
                     } => {
                         state_changed = true;
-                        if let Some(t) = app_state.tokens.get_mut(&name) {
+                        if let Some(t) = app_state.tokens.tokens.get_mut(&name) {
                             *t = to.clone();
                         }
-                        if let Some(t) = app_state.map.get_mut(&name) {
+                        if let Some(t) = app_state.map.tokens.get_mut(&name) {
                             *t = to.clone();
                         }
-                        if let Some(t) = app_state.gm.get_mut(&name) {
+                        if let Some(t) = app_state.gm.tokens.get_mut(&name) {
                             *t = to.clone();
                         }
                     }
@@ -142,27 +142,27 @@ impl Server {
                         state_changed = true;
                         app_state = state;
                     }
-                    EventData::TokenDestroyed { name, layer } => {
+                    EventData::TokenDestroyed { name, layer:_ } => {
                         state_changed = true;
-                        app_state.map.remove(&name);
-                        app_state.tokens.remove(&name);
-                        app_state.gm.remove(&name);
+                        app_state.map.tokens.remove(&name);
+                        app_state.tokens.tokens.remove(&name);
+                        app_state.gm.tokens.remove(&name);
                     }
                     EventData::TokenCreated { name, token, layer } => {
                         state_changed = true;
-                        if !app_state.map.contains_key(&name)
-                            && !app_state.gm.contains_key(&name)
-                            && !app_state.tokens.contains_key(&name)
+                        if !app_state.map.tokens.contains_key(&name)
+                            && !app_state.gm.tokens.contains_key(&name)
+                            && !app_state.tokens.tokens.contains_key(&name)
                         {
                             match layer {
-                                Layer::Base => {
-                                    app_state.tokens.insert(name, token);
+                                LayerType::Base => {
+                                    app_state.tokens.tokens.insert(name, token);
                                 }
-                                Layer::Map => {
-                                    app_state.map.insert(name, token);
+                                LayerType::Map => {
+                                    app_state.map.tokens.insert(name, token);
                                 }
-                                Layer::Gm => {
-                                    app_state.gm.insert(name, token);
+                                LayerType::Gm => {
+                                    app_state.gm.tokens.insert(name, token);
                                 }
                             }
                         }
@@ -224,7 +224,7 @@ impl Server {
                                 };
                                 let _ = write_object(&mut i, &e);
                             }
-                            if this.owner == "" {
+                            if this.owner.is_empty() {
                                 this.owner = username.clone()
                             }
                             this.clients.insert(
@@ -278,7 +278,7 @@ impl Server {
             drop(lck);
             if state_changed {
                 let mut people: Vec<String> =
-                    this.clients.iter().map(|(i, _)| i.to_owned()).collect();
+                    this.clients.keys().map(|i| i.to_owned()).collect();
                 people.sort_unstable();
                 for i in &mut this.clients {
                     let _ = write_object(

@@ -62,11 +62,11 @@ impl<T: Debug> Debug for Exception<T> {
     }
 }
 impl<T: Debug> std::error::Error for Exception<T> {}
-pub trait AsErr<T> {
-    fn as_err(self) -> throws!(T);
+pub trait ToErr<T> {
+    fn to_err(self) -> throws!(T);
 }
-impl<T> AsErr<T> for Option<T> {
-    fn as_err(self) -> crate::throws!(T) {
+impl<T> ToErr<T> for Option<T> {
+    fn to_err(self) -> crate::throws!(T) {
         match self {
             Some(v) => Ok(v),
             None => {
@@ -75,8 +75,8 @@ impl<T> AsErr<T> for Option<T> {
         }
     }
 }
-impl<T, U: Error + 'static> AsErr<T> for Result<T, U> {
-    fn as_err(self) -> crate::throws!(T) {
+impl<T, U: Error + 'static> ToErr<T> for Result<T, U> {
+    fn to_err(self) -> crate::throws!(T) {
         match self {
             Ok(v) => Ok(v),
             Err(v) => Err(Box::new(v)),
@@ -143,7 +143,13 @@ pub fn write_object<T: Serialize>(stream: &mut TcpStream, v: &T) -> throws!() {
     let _ = stream.set_nonblocking(false);
     let s = serde_json::to_string(v)?;
     let size: [u8; 8] = u64::to_ne_bytes((s.len() as u64).to_le());
-    stream.write(&size)?;
-    stream.write(s.as_bytes())?;
+    let s0 = stream.write(&size)?;
+    if s0 != 8{
+        throw!(format!("wrote :{:#?} bytes into a u64", s0));
+    }
+    let s1 =stream.write(s.as_bytes())?;
+    if s1 != s.len(){
+        throw!(format!("wrote:{:#?} bytes expected {:#?} bytes", s1, s.len()))
+    }
     Ok(())
 }
