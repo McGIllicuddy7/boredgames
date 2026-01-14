@@ -2,7 +2,8 @@ use std::{collections::HashMap, sync::{Arc, LazyLock}};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{DEFINE_ID_WRAPPER, events::IDS, Throws, events::{ThreadSafeIsh, EventSync}};
+use crate::DEFINE_ID_WRAPPER;
+use super::{events::IDS, Throws, events::{ThreadSafeIsh, EventSync}};
 use concat_idents::concat_idents;
 
 DEFINE_ID_WRAPPER!(ObjectId);

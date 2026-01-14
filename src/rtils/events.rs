@@ -4,12 +4,12 @@ use std::net::TcpStream;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
-use crate::msg::{Message, Object, ObjectId};
+use super::msg::{Message, Object, ObjectId};
 use serde::{Serialize,Deserialize};
 use async_trait::async_trait;
 
 #[allow(unused)]
-use crate::{Exception, Throw, Throws, server::HTTPRequest, server::HTTPResponse};
+use super::{Exception, Throw, Throws, server::HTTPRequest, server::HTTPResponse};
 
 #[macro_export]
 macro_rules! DEFINE_ID_WRAPPER {
@@ -509,7 +509,7 @@ impl<T: ThreadSafeIsh> Handler<T> {
     }
 
     pub async fn run_event(&mut self, i: Event<T>) -> Throws<()> {
-        for (_, sub) in &mut self.subscribers {
+        for sub in self.subscribers.values_mut() {
             match sub.as_ref().wants_global_event(&i).await? {
                 EventRequest::None => {
                     continue;
@@ -902,7 +902,7 @@ pub struct EventForwarder<T: ThreadSafeIsh> {
     should_forward_event: Box<dyn Fn(&Event<T>) -> bool + Send + Sync + 'static>,
 }
 impl<T: ThreadSafeIsh + Clone> EventForwarder<T> {
-    pub async fn new(
+    pub fn new(
         should_forward: impl Fn(&T) -> bool + Send + Sync + 'static,
         sync: EventSync<T>,
     ) -> BPipe<T> {
@@ -922,7 +922,7 @@ impl<T: ThreadSafeIsh + Clone> EventForwarder<T> {
         out_pipe
     }
 
-    pub async fn new_globals(
+    pub fn new_globals(
         should_forward: impl Fn(&Event<T>) -> bool + Send + Sync + 'static,
         sync: EventSync<T>,
     ) -> BPipe<Event<T>> {
@@ -1110,8 +1110,8 @@ impl<T> WriteOnce<T> {
                 }
             }
         }
-        let out = Out { v: self.v.clone() };
-        out
+        
+        Out { v: self.v.clone() }
     }
 
     pub fn write(self, v: T) {

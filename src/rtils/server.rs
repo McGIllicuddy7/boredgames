@@ -3,7 +3,8 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 use async_trait::async_trait;
 use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}};
 
-use crate::{Exception, Throw, Throws, events::{BPipe, Daemon, DaemonId, Event, EventForwarder, EventHandler, EventSync, EventType,  TcpConnectionId, ThreadSafeIsh}, throw};
+use crate::throw;
+use super::{Exception, Throw, Throws, events::{BPipe, Daemon, DaemonId, Event, EventForwarder, EventHandler, EventSync, EventType,  TcpConnectionId, ThreadSafeIsh}};
 /*
 * HTTP request enum, we will accept a body in any request for compatability with dumbshit because I
 * am a good girl
@@ -103,8 +104,8 @@ pub fn get_extension(s: &str) -> &str {
     for i in split {
         last = Some(i);
     }
-    let ext = if let Some(e) = last { e } else { "" };
-    ext
+    
+    (if let Some(e) = last { e } else { "" }) as _
 }
 
 #[test]
@@ -140,7 +141,7 @@ pub async fn read_line(stream: &mut TcpStream) -> Throws<Vec<u8>> {
     for i in 0..idx {
         out.push(buf[i]);
     }
-    return Ok(out);
+    Ok(out)
 }
 
 pub async fn http_get_request(stream: &mut TcpStream) -> Throws<HTTPRequest> {
@@ -188,12 +189,11 @@ pub async fn http_parse_get(header_string: &str, stream: &mut TcpStream) -> Thro
         let s = read_line(stream).await?;
         let s = str::from_utf8(&s)?.trim();
         let xs = s.split_once(":");
-        if let Some((start, remainder)) = xs {
-            if start == "Content-Length" {
+        if let Some((start, remainder)) = xs
+            && start == "Content-Length" {
                 cl = remainder.trim().parse::<usize>()?;
             }
-        }
-        if s.len() == 0 {
+        if s.is_empty() {
             break;
         }
     }
@@ -218,12 +218,11 @@ pub async fn http_parse_head(header_string: &str, stream: &mut TcpStream) -> Thr
         let s = read_line(stream).await?;
         let s = str::from_utf8(&s)?;
         let xs = s.split_once(":");
-        if let Some((start, remainder)) = xs {
-            if start == "Content-Length" {
+        if let Some((start, remainder)) = xs
+            && start == "Content-Length" {
                 cl = remainder.trim().parse::<usize>()?;
             }
-        }
-        if s.len() == 0 {
+        if s.is_empty() {
             break;
         }
     }
@@ -248,12 +247,11 @@ pub async fn http_parse_post(header_string: &str, stream: &mut TcpStream) -> Thr
         let s = read_line(stream).await?;
         let s = str::from_utf8(&s)?.trim();
         let xs = s.split_once(":");
-        if let Some((start, remainder)) = xs {
-            if start == "Content-Length" {
+        if let Some((start, remainder)) = xs
+            && start == "Content-Length" {
                 cl = remainder.trim().parse::<usize>()?;
             }
-        }
-        if s.len() == 0 {
+        if s.is_empty() {
             break;
         }
     }
@@ -278,12 +276,11 @@ pub async fn http_parse_put(header_string: &str, stream: &mut TcpStream) -> Thro
         let s = read_line(stream).await?;
         let s = str::from_utf8(&s)?;
         let xs = s.split_once(":");
-        if let Some((start, remainder)) = xs {
-            if start == "Content-Length" {
+        if let Some((start, remainder)) = xs
+            && start == "Content-Length" {
                 cl = remainder.trim().parse::<usize>()?;
             }
-        }
-        if s.len() == 0 {
+        if s.is_empty() {
             break;
         }
     }
@@ -311,12 +308,11 @@ pub async fn http_parse_connect(
         let s = read_line(stream).await?;
         let s = str::from_utf8(&s)?;
         let xs = s.split_once(":");
-        if let Some((start, remainder)) = xs {
-            if start == "Content-Length" {
+        if let Some((start, remainder)) = xs
+            && start == "Content-Length" {
                 cl = remainder.trim().parse::<usize>()?;
             }
-        }
-        if s.len() == 0 {
+        if s.is_empty() {
             break;
         }
     }
@@ -341,12 +337,11 @@ pub async fn http_parse_delete(header_string: &str, stream: &mut TcpStream) -> T
         let s = read_line(stream).await?;
         let s = str::from_utf8(&s)?;
         let xs = s.split_once(":");
-        if let Some((start, remainder)) = xs {
-            if start == "Content-Length" {
+        if let Some((start, remainder)) = xs
+            && start == "Content-Length" {
                 cl = remainder.trim().parse::<usize>()?;
             }
-        }
-        if s.len() == 0 {
+        if s.is_empty() {
             break;
         }
     }
@@ -408,7 +403,7 @@ impl<T:ThreadSafeIsh+Clone> HttpServer<T>{
     pub async fn try_new(addr:&str, config:HttpConfig, events:EventSync<T>)->Throws<Self>{
         let forwarder = EventForwarder::new(|_|{
             true
-        } ,events.clone()).await;
+        } ,events.clone());
         let listener = TcpListener::bind(addr).await?;
         Ok(Self {events, listener ,config, _forwarder:forwarder})
     }
@@ -422,7 +417,7 @@ impl<T:ThreadSafeIsh+Clone> HttpServer<T>{
         let events = EventForwarder::new_globals(|f|{
             let tmp = f.get_type();
             tmp == EventType::HttpResponse  || tmp ==EventType::NetOutput || tmp == EventType::NetInput || tmp == EventType::NotifyNewTcpConnection
-        },sync.clone()).await;
+        },sync.clone());
         let mut handler = TcpHandler{events, stream:con, con_id, config, sync:sync.clone()};
         handler.run().await;
     }

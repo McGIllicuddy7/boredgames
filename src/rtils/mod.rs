@@ -65,8 +65,8 @@ pub fn dyn_scanf(input: &str, format: &str, args: &mut [&mut dyn CopyFromStr]) -
                         argument.push(j.unwrap());
                     }
                 }
-                if let Some(e) = end_delim {
-                    if e == '{' || e == '}' {
+                if let Some(e) = end_delim
+                    && (e == '{' || e == '}') {
                         let Some(n) = fmt.next() else {
                             return false;
                         };
@@ -74,7 +74,6 @@ pub fn dyn_scanf(input: &str, format: &str, args: &mut [&mut dyn CopyFromStr]) -
                             return false;
                         }
                     }
-                }
                 if args_index >= args.len() {
                     return false;
                 }
@@ -110,13 +109,13 @@ pub fn dyn_scanf(input: &str, format: &str, args: &mut [&mut dyn CopyFromStr]) -
             break;
         }
     }
-    if let Some(_) = inp.next() {
+    if inp.next().is_some() {
         return false;
     }
     if args_index != args.len() {
         return false;
     }
-    return true;
+    true
 }
 mod rtils {
     #[allow(unused)]
