@@ -9,8 +9,11 @@ eframe = {version = "0.32.3", features = ["serde"]}
 egui_extras = {version = "0.32.3", features = ["all_loaders", "serde"]}
 image = { version ="0.25.9", features = ["png", "jpeg", "serde"]}
 local-ip-address = "0.6.8"
-serde = {version = "1.0.228" ,features = ["derive"]}
-serde_json = "1.0.147"
+async-trait = "0.1.89"
+concat-idents = "1.1.5"
+serde = {version = "1.0.228", features = ["derive", "rc"]}
+serde_json = "1.0.149"
+tokio = {version ="1.49.0", features = ["full"]}
 
 [package.metadata.bundle]
 identifier = "com.mcgillicuddy7.boredgames"
