@@ -1,3 +1,6 @@
+pub mod rtils;
+pub mod server;
+pub mod state;
 use raylib::{color::Color, prelude::RaylibDraw};
 
 fn main() {
