@@ -745,7 +745,6 @@ pub mod rtils_useful {
         }
     }
 
-    #[derive(Clone)]
     pub struct BPipe<T> {
         sending: Arc<Mutex<VecDeque<T>>>,
         recieving: Arc<Mutex<VecDeque<T>>>,
@@ -770,7 +769,7 @@ pub mod rtils_useful {
         }
 
         pub fn send(&self, v: T) -> Throws<()> {
-            if self.done.load(std::sync::atomic::Ordering::Relaxed) {
+            if self.done.load(std::sync::atomic::Ordering::Acquire) {
                 return Err("done".into());
             }
             let mut sending = self.sending.lock().unwrap();
@@ -779,16 +778,16 @@ pub mod rtils_useful {
         }
 
         pub fn recieve(&self) -> Throws<Option<T>> {
-            if self.done.load(std::sync::atomic::Ordering::Relaxed) {
+            if self.done.load(std::sync::atomic::Ordering::Acquire) {
                 todo!()
             }
             let mut recieving = self.recieving.lock().unwrap();
             Ok(recieving.pop_front())
         }
 
-        pub fn receive_buffer(&self)->Throws<Vec<T>>{
+        pub fn receive_buffer(&self) -> Throws<Vec<T>> {
             let mut out = Vec::new();
-            while let Some(x) = self.recieve()?{
+            while let Some(x) = self.recieve()? {
                 out.push(x);
             }
             Ok(out)
@@ -796,7 +795,7 @@ pub mod rtils_useful {
 
         pub fn recieve_wait(&self) -> Throws<T> {
             loop {
-                if self.done.load(std::sync::atomic::Ordering::Relaxed) {
+                if self.done.load(std::sync::atomic::Ordering::Acquire) {
                     return Err("done".into());
                 }
                 let mut recieving = self.recieving.lock().unwrap();
@@ -818,7 +817,7 @@ pub mod rtils_useful {
                     self: std::pin::Pin<&mut Self>,
                     _cx: &mut std::task::Context<'_>,
                 ) -> std::task::Poll<Self::Output> {
-                    if self.done.load(std::sync::atomic::Ordering::Relaxed) {
+                    if self.done.load(std::sync::atomic::Ordering::Acquire) {
                         return std::task::Poll::Ready(Err::<T, Exception>("done".into()));
                     }
                     let tmp = self.reciever.try_lock();
@@ -850,31 +849,23 @@ pub mod rtils_useful {
             }
         }
     }
-    impl <T> Iterator for BPipe<T>{
+    impl<T> Iterator for BPipe<T> {
         type Item = Throws<T>;
-    
+
         fn next(&mut self) -> Option<Self::Item> {
             let tmp = self.recieve();
-            match tmp{
-                Err(e)=>{
-                    Some(Err(e))
-                }
-                Ok(x)=>{
-                    match x{
-                        Some(t)=>{
-                            Some(Ok(t))
-                        }
-                        None=>{
-                            None
-                        }
-                    }
-                }
+            match tmp {
+                Err(e) => Some(Err(e)),
+                Ok(x) => match x {
+                    Some(t) => Some(Ok(t)),
+                    None => None,
+                },
             }
         }
-    }      
+    }
     impl<T> Drop for BPipe<T> {
         fn drop(&mut self) {
-            self.done.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.done.store(true, std::sync::atomic::Ordering::Release);
         }
     }
 
@@ -903,21 +894,21 @@ pub mod rtils_useful {
         let mut buf = Vec::new();
         for _ in 0..len {
             buf.push(0_u8);
-        } 
+        }
         stream.set_nonblocking(false)?;
         let e = stream.read_exact(&mut buf);
         stream.set_nonblocking(true)?;
-        if let Err(e) = e{
+        if let Err(e) = e {
             throw!(e);
         }
         Ok(Some(buf))
-    } 
+    }
 
     pub fn stream_read_bytes_blocking(stream: &mut std::net::TcpStream) -> Throws<Vec<u8>> {
         stream.set_nonblocking(false)?;
         let mut bytes = [0; 8];
         let e = stream.read_exact(&mut bytes);
-        if let Err(e) = e{
+        if let Err(e) = e {
             stream.set_nonblocking(true)?;
             throw!(e);
         }
@@ -925,12 +916,12 @@ pub mod rtils_useful {
         let mut buf = Vec::new();
         for _ in 0..len {
             buf.push(0_u8);
-        } 
+        }
         let e = stream.read_exact(&mut buf);
         stream.set_nonblocking(true)?;
-        if let Err(e) = e{
+        if let Err(e) = e {
             throw!(e);
         }
         Ok(buf)
-    } 
+    }
 }
