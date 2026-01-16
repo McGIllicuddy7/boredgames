@@ -25,6 +25,7 @@ pub struct TuiClient {
     pub messages: Vec<(String, String)>,
     pub gui: TextFrameBuffer,
 }
+
 impl TuiClient {
     pub fn new() -> Self {
         Self {
@@ -287,10 +288,11 @@ impl TuiClient {
                 match c.code {
                     KeyCode::Char(c) => {
                         self.cmd.push(c);
-                        while let Some((s, r)) = self.cmd.clone().split_once('\n') {
-                            self.run_cmd(s)?;
-                            self.cmd = r.to_string();
-                        }
+                    }
+                    KeyCode::Enter => {
+                        let cmd = self.cmd.clone();
+                        self.run_cmd_no_client(&cmd)?;
+                        self.cmd = String::new();
                     }
                     _ => {}
                 }
@@ -331,6 +333,7 @@ impl TuiClient {
         for i in &self.prev_cmds {
             let msg = format!("{}", i);
             g.draw_string_wrapping(&msg);
+            g.end_line();
         }
         g.reset_bounds();
         g.draw_box(49, 60, 32, 5);
@@ -389,10 +392,11 @@ impl TuiClient {
                 match c.code {
                     KeyCode::Char(c) => {
                         self.cmd.push(c);
-                        while let Some((s, r)) = self.cmd.clone().split_once('\n') {
-                            self.run_cmd(s)?;
-                            self.cmd = r.to_string();
-                        }
+                    }
+                    KeyCode::Enter => {
+                        let cmd = self.cmd.clone();
+                        self.run_cmd_no_client(&cmd)?;
+                        self.cmd = String::new();
                     }
                     _ => {}
                 }
