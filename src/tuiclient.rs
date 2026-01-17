@@ -1,4 +1,4 @@
-use crossterm::event::Event;
+/*use crossterm::event::Event;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::poll;
@@ -291,7 +291,7 @@ impl TuiClient {
                     }
                     KeyCode::Enter => {
                         let cmd = self.cmd.clone();
-                        self.run_cmd_no_client(&cmd)?;
+                        self.run_cmd(&cmd)?;
                         self.cmd = String::new();
                     }
                     _ => {}
@@ -351,7 +351,7 @@ impl TuiClient {
         match first {
             "host" => {
                 let (ctl, ctl1) = BPipe::create();
-                let h = crate::server::run_server("127.0.0.1:8080".to_string(), ctl1)?;
+                let h = crate::server::run_server("127.0.0.1:7272".to_string(), ctl1)?;
                 let (con, con1) = BPipe::create();
                 let pipe = crate::server::MessagePipe::from_pipe(con1);
                 ctl.send(ServerCtl::LocalConnection { con })?;
@@ -674,4 +674,12 @@ impl TextFrameBuffer {
         self.cursor_y = y as usize;
         self.carriage_x = x as usize;
     }
+
+    pub fn render_scroll_list(&mut self, x: i32, y: i32, w: i32, h: i32, list: &[impl AsRef<str>]) {
+        self.draw_box(x, y, w, h);
+        let mut old_x = self.cursor_x;
+        let mut old_y = self.cursor_y;
+        let mut old_buf = self.frame_buffer;
+    }
 }
+*/
