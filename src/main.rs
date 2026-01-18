@@ -15,11 +15,12 @@ fn main() {
         cl.begin_div();
 
         cl.add_text("hello window".to_string());
-        /*let idx2 = cl.begin_scrollbox(10, 10, idx);
+        let idx2 = cl.begin_scrollbox(10, 10, idx);
         cl.set_upside_down();
         for i in 0..5 {
             cl.add_text(format!("testing:{i}"));
-        }*/
+        }
+        cl.end_div();
         cl.end_div();
         cl.begin_div();
         let mut bvec = Vec::new();
@@ -27,8 +28,6 @@ fn main() {
             bvec.push(cl.add_button(5, 3, format!("click:{}", i)));
         }
         cl.end_div();
-
-
         cl.begin_div();
         cl.add_text(":3");
         cl.end_div();
@@ -39,7 +38,7 @@ fn main() {
         let mut dh = handle.begin_drawing(&thread);
         dh.clear_background(Color::BLACK);
         cl.draw_frame(&mut dh);
-        //idx = idx2.take().unwrap();
+        idx = idx2.take().unwrap();
         let mut should_exit = false;
         for i in bvec{
             if i.take().unwrap(){

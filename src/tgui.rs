@@ -37,6 +37,19 @@ impl<T> TGuiOutput<T> {
     }
 }
 
+
+pub trait GuiObject:Debug{
+    fn as_clone(&self)->Box<dyn GuiObject>;
+    fn shift(&mut self, amount:i32, vertical: bool);
+    fn update_bounds(&mut self, bounds:Boundary);
+    fn draw(&mut self, handle:&mut RaylibDrawHandle);
+}
+impl Clone for Box<dyn GuiObject>{
+    fn clone(&self) -> Self {
+        self.as_clone()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum TGuiDraw {
     DrawString {
@@ -86,6 +99,9 @@ pub enum TGuiDraw {
         color: Color,
         upside_down: bool,
     },
+    BoxedGuiObject{
+        obj:Box<dyn GuiObject>,
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -180,8 +196,8 @@ impl TGuiDraw {
                 padding_y,
                 color: _,
             } => {
-                let mut dw = 0;
-                let mut dh = 0;
+                let mut dw = *w;
+                let mut dh = *h;
                 for i in children {
                     let bs = i.get_min_boundary();
                     let tdw = bs.x + bs.w - *x + padding_x;
@@ -239,6 +255,9 @@ impl TGuiDraw {
                     h: *h,
                     w: min_w,
                 }
+            }
+            TGuiDraw::BoxedGuiObject {obj  }=>{
+                todo!()
             }
         }
     }
@@ -308,7 +327,7 @@ impl TGuiDraw {
                 y,
                 w,
                 h: _,
-                children: _,
+                children,
                 scroll_amount: _,
                 color: _,
                 padding_x: _,
@@ -316,9 +335,16 @@ impl TGuiDraw {
                 current_scroll_amount: _,
                 upside_down: _,
             } => {
+                let dx = b.x - *x;
+                for i in children{
+                    i.shift(dx, false);
+                }
                 *x = b.x;
                 *y = b.y;
                 *w = b.w;
+            }
+            TGuiDraw::BoxedGuiObject { obj }=>{
+                obj.update_bounds(b);
             }
         }
     }
@@ -433,6 +459,10 @@ impl TGuiDraw {
                     scroll_amount.send(*current_scroll_amount);
                 }
             }
+            TGuiDraw::BoxedGuiObject { obj
+             }=>{
+                obj.draw(draw_handle);
+            }
         }
     }
     pub fn shift(&mut self, amount: i32, vertical: bool) {
@@ -519,6 +549,9 @@ impl TGuiDraw {
                 for i in children {
                     i.shift(amount, vertical);
                 }
+            }
+            TGuiDraw::BoxedGuiObject {  obj}=>{
+                obj.shift(amount, vertical);
             }
         }
     }
@@ -799,11 +832,30 @@ impl TGui {
     }
 
     pub fn end_div(&mut self) {
-        let x = self.draw_call_stack.pop().unwrap(); 
-        if x.scroll_box.is_some(){
-            todo!()
+        let mut x = self.draw_call_stack.pop().unwrap(); 
+        let bounds = x.bounds();
+        if let Some(sb) =x.scroll_box{           
+            if let Some(mut y) = self.draw_call_stack.pop(){
+                let shift = (x.h as f32 * x.scroll_amount as f32/1000.0 ) as i32;
+                for i in &mut x.draw_calls{
+                    i.shift(shift, true);
+                }
+                if y.vertical{
+                    self.cursor_x = bounds.x;
+                    self.cursor_y = bounds.y + bounds.h;
+                }else{
+                    self.cursor_y = bounds.y;
+                    self.cursor_x = bounds.x + bounds.w;
+                }
+                let call = TGuiDraw::ScrollBox { x: x.x, y: x.y, w: x.w, h: x.h, children: x.draw_calls, scroll_amount: sb, current_scroll_amount: x.scroll_amount, padding_x: x.padding_x, padding_y: x.padding_y, color: x.bg_color, upside_down: x.upside_down } ;
+                y.draw_calls.push(call);
+                self.draw_call_stack.push(y);
+            }else{
+                for i in x.draw_calls{
+                    self.draw_calls.push(i);
+                }
+            }
         }else{
-            let bounds = x.bounds();
             if let Some(mut y) = self.draw_call_stack.pop(){
                 if y.vertical{
                     self.cursor_x = bounds.x;
@@ -827,7 +879,22 @@ impl TGui {
 
     pub fn add_text(&mut self, text: impl Into<String>) {
         let txt = text.into();
-        let w = if txt.len() > 30 { 15 } else { txt.len()/2 };
+        let w = if let Some(w) = self.draw_call_stack.pop(){ 
+            if w.vertical{
+
+                let v = w.w;
+                self.draw_call_stack.push(w);
+                if v> txt.len() as i32{
+                    v
+                }else{
+                    if txt.len() > 30 { 30  as i32} else { (txt.len())  as i32} 
+                }
+            }else{            
+                self.draw_call_stack.push(w);
+               if txt.len() > 30 { 30 as i32} else { (txt.len())  as i32} 
+            }
+
+        }else{if txt.len() > 30 { 30 as i32} else { (txt.len()) as i32}};
         let mut div = self.draw_call_stack.pop().unwrap();
         let bounds = get_string_bounds(
             &txt,
