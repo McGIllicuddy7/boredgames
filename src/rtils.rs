@@ -68,8 +68,8 @@ pub mod rtils_useful {
                             argument.push(j.unwrap());
                         }
                     }
-                    if let Some(e) = end_delim {
-                        if e == '{' || e == '}' {
+                    if let Some(e) = end_delim
+                        && (e == '{' || e == '}') {
                             let Some(n) = fmt.next() else {
                                 return false;
                             };
@@ -77,7 +77,6 @@ pub mod rtils_useful {
                                 return false;
                             }
                         }
-                    }
                     if args_index >= args.len() {
                         return false;
                     }
@@ -104,22 +103,20 @@ pub mod rtils_useful {
                 if j != '}' {
                     return false;
                 }
-            } else {
-                if i != j {
-                    return false;
-                }
+            } else if i != j {
+                return false;
             }
             if done {
                 break;
             }
         }
-        if let Some(_) = inp.next() {
+        if inp.next().is_some() {
             return false;
         }
         if args_index != args.len() {
             return false;
         }
-        return true;
+        true
     }
     mod rtils {
         #[allow(unused)]
@@ -709,8 +706,8 @@ pub mod rtils_useful {
                     }
                 }
             }
-            let out = Out { v: self.v.clone() };
-            out
+            
+            Out { v: self.v.clone() }
         }
 
         pub fn write(self, v: T) {
@@ -858,10 +855,7 @@ pub mod rtils_useful {
             let tmp = self.recieve();
             match tmp {
                 Err(e) => Some(Err(e)),
-                Ok(x) => match x {
-                    Some(t) => Some(Ok(t)),
-                    None => None,
-                },
+                Ok(x) => x.map(Ok),
             }
         }
     }
@@ -950,4 +944,184 @@ pub mod rtils_useful {
             self.x
         }
     }
+
+
+#[derive(Clone, Debug)]
+pub struct Token {
+    pub text: String,
+    pub file: String,
+    pub line: usize,
+}
+
+#[derive(Clone, Debug)]
+pub struct TokenStream {
+    pub tokens: Vec<Token>,
+    pub index: usize,
+}
+
+
+impl AsRef<str> for Token {
+    fn as_ref(&self) -> &str {
+        &self.text
+    }
+}
+
+impl TokenStream {
+    pub fn from_string(s: String, file: String) -> Self {
+        let tokens = tokenize(s, file);
+        Self { tokens, index: 0 }
+    }
+    pub fn peek(&self) -> Option<Token> {
+        let mut t = self.clone();
+        t.next()
+    }
+    pub fn insert_next(&mut self, t: Token) {
+        self.tokens.insert(self.index, t);
+    }
+}
+
+impl Iterator for TokenStream {
+    type Item = Token;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index < self.tokens.len() {
+            let out = self.tokens[self.index].clone();
+            self.index += 1;
+            Some(out)
+        } else {
+            None
+        }
+    }
+}
+
+pub fn tokenize(s: String, file: String) -> Vec<Token> {
+    enum State {
+        Whitespace,
+        Ident,
+        String,
+        Comment,
+        StringEscaped,
+    }
+    let mut out = Vec::new();
+    let mut buf = String::new();
+    let mut line = 1;
+    let mut state = State::Whitespace;
+    for c in s.chars() {
+        match state {
+            State::Whitespace => {
+                if c == ' ' || c == '\t' {
+                } else if c == '\n' {
+                    line += 1;
+                } else if c == ':'
+                    || c == '+'
+                    || c == '-'
+                    || c == '*'
+                    || c == '/'
+                    || c == '('
+                    || c == ')'
+                    || c == '<'
+                    || c == '>'
+                {
+                    out.push(Token {
+                        text: c.to_string(),
+                        file: file.clone(),
+                        line,
+                    });
+                } else if c == '"' {
+                    buf = String::new();
+                    state = State::String;
+                } else if c == ';' {
+                    buf = String::new();
+                    state = State::Comment;
+                } else {
+                    buf = String::new();
+                    buf.push(c);
+                    state = State::Ident;
+                }
+            }
+            State::Ident => {
+                if !c.is_whitespace()
+                    && !(c == ':'
+                        || c == '+'
+                        || c == '-'
+                        || c == '*'
+                        || c == '/'
+                        || c == ';'
+                        || c == '('
+                        || c == ')'
+                        || c == '>'
+                        || c == '<')
+                {
+                    buf.push(c);
+                } else {
+                    out.push(Token {
+                        text: buf,
+                        file: file.clone(),
+                        line,
+                    });
+                    buf = String::new();
+                    if c == '\n' {
+                        line += 1;
+                    } else if c == ':'
+                        || c == '+'
+                        || c == '-'
+                        || c == '*'
+                        || c == '/'
+                        || c == '('
+                        || c == ')'
+                        || c == '>'
+                        || c == '<'
+                    {
+                        out.push(Token {
+                            text: c.to_string(),
+                            file: file.clone(),
+                            line,
+                        });
+                    }
+                    state = if c == ';' {
+                        State::Comment
+                    } else {
+                        State::Whitespace
+                    };
+                }
+            }
+            State::String => {
+                if c == '"' {
+                    buf = "\"".to_string() + &buf + "\"";
+                    out.push(Token {
+                        text: buf,
+                        file: file.clone(),
+                        line,
+                    });
+                    buf = String::new();
+                    state = State::Whitespace;
+                } else if c == '\\' {
+                    state = State::StringEscaped;
+                } else if c == '\n' {
+                    line += 1;
+                } else {
+                    buf.push(c);
+                }
+            }
+            State::StringEscaped => {
+                buf.push(c);
+                state = State::String;
+            }
+            State::Comment => {
+                if c == '\n' {
+                    line += 1;
+                    state = State::Whitespace
+                }
+            }
+        }
+    }
+    if !buf.is_empty() {
+        out.push(Token {
+            text: buf,
+            file,
+            line,
+        });
+    }
+    //println!("{:#?}", out);
+    out
+}   
 }

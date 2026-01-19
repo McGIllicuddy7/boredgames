@@ -1,4 +1,4 @@
-use std::{cell::Cell, collections::{BTreeMap, HashMap, HashSet}, fmt::Debug, rc::Rc, sync::{Arc, Mutex}};
+use std::{any::Any, cell::Cell, collections::{BTreeMap, HashMap, HashSet}, fmt::Debug, rc::Rc, sync::{Arc, Mutex}};
 
 use raylib::{
     color::Color,
@@ -21,6 +21,12 @@ impl<T: Debug> Debug for TGuiOutput<T> {
         let out = f.debug_struct("TGuiOutput").field("output", &x).finish();
         self.output.set(x);
         out
+    }
+}
+
+impl<T> Default for TGuiOutput<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -154,7 +160,7 @@ impl TGuiDraw {
                 y,
                 max_width,
                 color: _,
-            } => get_string_bounds(&string, *x, *y, *max_width),
+            } => get_string_bounds(string, *x, *y, *max_width),
             TGuiDraw::DrawBox {
                 x,
                 y,
@@ -178,13 +184,13 @@ impl TGuiDraw {
             } => {
                 let by = get_string_bounds(text, *x + 1, *y + 1, *w - 1);
                 let b_y = if by.h > *h { by.h } else { *h };
-                let out = Boundary {
+                
+                Boundary {
                     x: *x,
                     y: *y,
                     h: b_y,
                     w: *w,
-                };
-                out
+                }
             }
             TGuiDraw::Container {
                 x,
@@ -612,7 +618,7 @@ pub fn draw_rectangle(handle: &mut RaylibDrawHandle, x: i32, y: i32, w: i32, h: 
 }
 
 pub fn set_bounds(bs: &mut [TGuiDraw], b: Boundary, vertical: bool) {
-    if bs.len() == 0 {
+    if bs.is_empty() {
         return;
     }
     let mut used_w = 0;
@@ -724,6 +730,12 @@ pub struct TGui {
     pub cursor_y: i32,
     pub w: i32,
     pub h: i32,
+}
+
+impl Default for TGui {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TGui {
@@ -882,22 +894,20 @@ impl TGui {
                     self.draw_calls.push(i);
                 }
             }
-        }else{
-            if let Some(mut y) = self.draw_call_stack.pop(){
-                if y.vertical{
-                    self.cursor_x = bounds.x;
-                    self.cursor_y = bounds.y + bounds.h;
-                }else{
-                    self.cursor_y = bounds.y;
-                    self.cursor_x = bounds.x + bounds.w;
-                }
-                let call = TGuiDraw::Container { x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h, children: x.draw_calls, vertical: x.vertical, padding_x: x.padding_x, padding_y: x.padding_y, color:x.bg_color };
-                y.draw_calls.push(call);
-                self.draw_call_stack.push(y);
+        }else if let Some(mut y) = self.draw_call_stack.pop(){
+            if y.vertical{
+                self.cursor_x = bounds.x;
+                self.cursor_y = bounds.y + bounds.h;
             }else{
-                for i in x.draw_calls{
-                    self.draw_calls.push(i);
-                }
+                self.cursor_y = bounds.y;
+                self.cursor_x = bounds.x + bounds.w;
+            }
+            let call = TGuiDraw::Container { x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h, children: x.draw_calls, vertical: x.vertical, padding_x: x.padding_x, padding_y: x.padding_y, color:x.bg_color };
+            y.draw_calls.push(call);
+            self.draw_call_stack.push(y);
+        }else{
+            for i in x.draw_calls{
+                self.draw_calls.push(i);
             }
         }
 
@@ -913,27 +923,25 @@ impl TGui {
                 self.draw_call_stack.push(w);
                 if v> txt.len() as i32{
                     v
-                }else{
-                    if txt.len() > 30 { 30  as i32} else { (txt.len())  as i32} 
-                }
+                }else if txt.len() > 30 { 30_i32} else { (txt.len())  as i32}
             }else{            
                 self.draw_call_stack.push(w);
-               if txt.len() > 30 { 30 as i32} else { (txt.len())  as i32} 
+               if txt.len() > 30 { 30_i32} else { (txt.len())  as i32} 
             }
 
-        }else{if txt.len() > 30 { 30 as i32} else { (txt.len()) as i32}};
+        }else if txt.len() > 30 { 30_i32} else { (txt.len()) as i32};
         let mut div = self.draw_call_stack.pop().unwrap();
         let bounds = get_string_bounds(
             &txt,
             self.cursor_x ,
             self.cursor_y ,
-            w as i32,
+            w,
         );
         div.draw_calls.push(TGuiDraw::DrawString {
             string: txt,
             x: self.cursor_x ,
             y: self.cursor_y ,
-            max_width: w as i32,
+            max_width: w,
             color: div.fg_color,
         });
         if div.vertical {
@@ -1051,7 +1059,7 @@ impl TGui {
 
     pub fn draw_frame(&mut self, draw_handle: &mut RaylibDrawHandle) {
         self.end_div();
-        assert!(self.draw_call_stack.len() == 0);
+        assert!(self.draw_call_stack.is_empty());
         println!("setting bounds");
         println!("before draw calls:{:#?}", self.draw_calls);
         set_bounds(
@@ -1126,6 +1134,12 @@ impl TGui {
 pub struct ElementId{
     v:u32
 }
+impl Default for ElementId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ElementId{
     pub const fn new()->Self{
         Self { v: 0 }
@@ -1150,6 +1164,7 @@ pub struct TransGui{
     mutated:bool,
     modifications:usize,
     hidden:HashSet<ElementId>,
+    list_cache:HashMap<ElementId, Box<dyn Any>>
 }
 
 
@@ -1211,10 +1226,16 @@ impl TransGuiElement{
     }
 }
 
+impl Default for TransGui {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TransGui{
     pub fn new()->Self{
         Self { elements: BTreeMap::new(), roots:Vec::new(), fg_color:Color::GREEN, bg_color:Color::GREEN, name_table:HashMap::new() , gui:TGui::new(), mutated:false, scrollbar_outputs:HashMap::new(), button_outputs:HashMap::new(), 
-        modifications:0, hidden:HashSet::new()}
+        modifications:0, hidden:HashSet::new(), list_cache:HashMap::new()}
     }
 
     pub fn new_element(&mut self,e:TransGuiElement)->ElementId{
@@ -1431,6 +1452,42 @@ impl TransGui{
         self.gui.draw_frame(handle);
     }
 
+    pub fn recompute_list<T:PartialEq+Clone+'static>(&mut self,element:ElementId, list:&[T],create_element:impl FnMut(&mut TransGui,&T)->ElementId){
+        let mut ce = create_element;
+        if let Some(cache) = self.list_cache.remove(&element){
+            let dc:Box<Vec<T>> = cache.downcast().unwrap();
+            if *dc == list{
+                return;
+            }
+        }
+        self.remove_children(element);
+        for i in list{
+            let e = ce(self, i);
+            self.attach_to_element(e, element);
+        }
+    
+    }
+    pub fn remove_children(&mut self, elem:ElementId){
+        let e = self.get_element(elem).unwrap();
+        match e.clone(){
+
+            TransGuiElement::Container { children, horizontal:_, parent:_, color:_, upside_down:_ } => {
+                for i in children.get(){
+                    self.detach_element(*i);
+                }
+            },
+            TransGuiElement::ScrollBox { scroll_amount:_, w:_, h:_, children, parent:_, color:_, upside_down:_ } => {
+                for i in children.get(){
+                    self.detach_element(*i);
+                }
+            }
+            _=>{
+
+            }
+        }
+
+    }
+
     fn recompute_element(&mut self, id:ElementId){
         if self.hidden.contains(&id){
             return;
@@ -1588,7 +1645,6 @@ impl TransGui{
                 
             }
             _=>{
-                return;
             }
         }
     }
@@ -1598,11 +1654,11 @@ impl TransGui{
         for i in& self.roots{
             self.collect_element(*i, &mut reachable_set);
         }
-        for (_,id) in &self.name_table{
+        for id in self.name_table.values(){
             reachable_set.insert(*id);
         }
         let mut purge_list = Vec::new();
-        for (id, _) in &self.elements{
+        for id in self.elements.keys(){
             if !reachable_set.contains(id){
                 purge_list.push(*id);
             }
@@ -1616,5 +1672,47 @@ impl TransGui{
 
     pub fn should_collect(&self)->bool{
         self.modifications>20
+    }
+}
+
+extern crate transir;
+#[derive(Clone)]
+pub enum TransIr{
+    String{s:String, color:Option<Color>, name:Option<String>}, 
+    Box{h:i32, w:i32, color:Option<Color>, name:Option<String>}, 
+    Button{color:Option<Color>, on_pressed:Arc<Mutex<dyn FnMut(&mut TransGui, ElementId)>>, text:String, name:Option<String>}, 
+    Container{
+        children:Vec<TransIr>, horizontal:bool, color:Option<Color>, upside_down:bool, name:Option<String>,
+    },
+    ScrollBox{
+        w:i32, h:i32, children:Vec<ElementId>, color:Option<Color>, upside_down:bool, name:Option<String>
+    }
+}
+impl TransIr{
+    pub fn add_to_gui(self, _gui:&mut TransGui){
+        match self{
+            TransIr::String { s: _, color: _,name: _ } => {
+                
+            }
+            TransIr::Box { h: _, w: _, color: _,name: _ } => {
+
+            }
+            TransIr::Button { color: _, on_pressed: _, text: _, name: _ } =>{
+
+            }
+            TransIr::Container { children: _, horizontal: _, color: _, upside_down: _ , name: _} => {
+
+            }
+            TransIr::ScrollBox { w: _, h: _, children: _, color: _, upside_down: _ ,name: _} => {
+
+            }
+        }
+    }
+    pub fn to_gui(list:Vec<Self>)->TransGui{
+        let mut out = TransGui::new();
+        for i in list{
+            i.add_to_gui(&mut out);
+        }
+        out
     }
 }

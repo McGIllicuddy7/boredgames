@@ -86,10 +86,7 @@ impl Iterator for MessagePipe {
         let tmp = self.try_read_message();
         match tmp {
             Err(e) => Some(Err(e)),
-            Ok(x) => match x {
-                Some(t) => Some(Ok(t)),
-                None => None,
-            },
+            Ok(x) => x.map(Ok),
         }
     }
 }
@@ -123,17 +120,17 @@ impl Server {
         let base = global.alloc_bloc();
         let id = IdAllocator::new(base);
         let self_id = id.alloc();
-        let out = Ok(Self {
+        
+        Ok(Self {
             this_state: State::new(self_id),
             clients: HashMap::new(),
             listener: TcpListener::bind(addr)?,
             allocator: id,
-            global: global,
+            global,
             self_id,
             ctl,
             images: HashMap::new(),
-        });
-        out
+        })
     }
 
     pub fn run(&mut self) {
@@ -294,7 +291,7 @@ impl Server {
                     id,
                     ClientState {
                         pipe: i,
-                        id: id,
+                        id,
                         start_page: start,
                         username: String::new(),
                     },

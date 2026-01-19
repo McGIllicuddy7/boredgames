@@ -83,6 +83,12 @@ impl IdAllocator {
 pub struct GlobalIdManager {
     used: Arc<Mutex<BTreeSet<u64>>>,
 }
+impl Default for GlobalIdManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GlobalIdManager {
     pub fn new() -> Self {
         let mut x = BTreeSet::new();
@@ -230,10 +236,10 @@ impl State {
                 x.layer = layer;
             }
             MessageData::CreateObject { id, obj } => {
-                if self.objects.contains_key(&id) {
-                    todo!();
+                if let std::collections::hash_map::Entry::Vacant(e) = self.objects.entry(id) {
+                    e.insert(obj);
                 } else {
-                    self.objects.insert(id, obj);
+                    todo!();
                 }
             }
             MessageData::DestroyObject { id } => {
@@ -281,37 +287,34 @@ pub struct ClientData {
 impl ClientData {
     pub fn new(mut connection: MessagePipe, username: String) -> Throws<Self> {
         let msg = connection.read_message_blocking()?;
-        match msg.data {
-            MessageData::HandShake {
+        if let MessageData::HandShake {
                 mut state,
                 allocator_start,
                 images,
                 users,
                 user_id,
-            } => {
-                state.self_id = user_id;
-                connection.write_message(Message {
-                    meta: MessageMetaData { sender: user_id },
-                    data: MessageData::Connect {
-                        username: UserClient { username },
-                        connected_id: user_id,
-                    },
-                })?;
-                return Ok(Self {
-                    images,
-                    state,
-                    connection,
-                    others: users,
-                    allocator: IdAllocator::new(allocator_start),
-                    notify_new_image: false,
-                    notify_deleted_image: false,
-                    notify_new_message: false,
-                    messages: Vec::new(),
-                    created_images: Vec::new(),
-                    deleted_images: Vec::new(),
-                });
-            }
-            _ => {}
+            } = msg.data {
+            state.self_id = user_id;
+            connection.write_message(Message {
+                meta: MessageMetaData { sender: user_id },
+                data: MessageData::Connect {
+                    username: UserClient { username },
+                    connected_id: user_id,
+                },
+            })?;
+            return Ok(Self {
+                images,
+                state,
+                connection,
+                others: users,
+                allocator: IdAllocator::new(allocator_start),
+                notify_new_image: false,
+                notify_deleted_image: false,
+                notify_new_message: false,
+                messages: Vec::new(),
+                created_images: Vec::new(),
+                deleted_images: Vec::new(),
+            });
         }
         todo!()
     }
@@ -356,9 +359,7 @@ impl ClientData {
                     let sid = *id;
                     let r = self.state.handle_message(x);
                     self.allocator.dealloc(sid);
-                    if let Err(e) = r {
-                        return Err(e);
-                    }
+                    r?
                 }
                 MessageData::Connect {
                     username,
@@ -439,8 +440,8 @@ impl ClientData {
     }
 
     pub fn take_new_messages(&mut self) -> Vec<(String, String)> {
-        let out = self.messages.clone();
-        out
+        
+        self.messages.clone()
     }
 
     pub fn take_new_images(&mut self) -> HashMap<String, Arc<[u8]>> {
