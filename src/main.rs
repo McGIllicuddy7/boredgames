@@ -1,4 +1,8 @@
+use std::process::exit;
+
 use raylib::{color::Color, prelude::RaylibDraw};
+
+use crate::tgui::TransGui;
 
 pub mod rtils;
 pub mod server;
@@ -7,46 +11,27 @@ pub mod tgui;
 fn main() {
     let (mut handle, thread) = raylib::init().size(1000, 1000).title("testing").build();
     handle.set_target_fps(60);
-    let mut cl = tgui::TGui::new();
-    let mut idx = 0;
+    let mut gui = TransGui::new();
+    let first = gui.new_section();
+    println!("{:#?}", first);
+    gui.attach_to_doc(first);
+    let t1 = gui.new_text("hello world!");
+    gui.attach_to_element(t1, first);
+    let t2 = gui.new_text("testing 1 2 3");
+    gui.attach_to_element(t2, first);
+    let second = gui.new_section();
+    gui.attach_to_doc(second);
+    let sb = gui.new_scroll_box(20, 40);
+    gui.attach_to_element(sb, second);
+    for i in 0..100{
+        let bx = gui.new_button(|_,_|{
+            exit(0);
+        },format!("testing {}",i));
+        gui.attach_to_element(bx, sb);
+    }
     while !handle.window_should_close() {
-        cl.begin_frame();
-        cl.set_bg_color(Color::GREEN);
-        cl.begin_div();
-
-        cl.add_text("hello window".to_string());
-        let idx2 = cl.begin_scrollbox(10, 10, idx);
-        cl.set_upside_down();
-        for i in 0..5 {
-            cl.add_text(format!("testing:{i}"));
-        }
-        cl.end_div();
-        cl.end_div();
-        cl.begin_div();
-        let mut bvec = Vec::new();
-        for i in 0..5{
-            bvec.push(cl.add_button(5, 3, format!("click:{}", i)));
-        }
-        cl.end_div();
-        cl.begin_div();
-        cl.add_text(":3");
-        cl.end_div();
-        cl.begin_div();
-        cl.add_text(":4");
-        cl.end_div();
-
-        let mut dh = handle.begin_drawing(&thread);
-        dh.clear_background(Color::BLACK);
-        cl.draw_frame(&mut dh);
-        idx = idx2.take().unwrap();
-        let mut should_exit = false;
-        for i in bvec{
-            if i.take().unwrap(){
-                should_exit = true;
-            }
-        }
-        if should_exit{
-            break;
-        }
+        let mut dr = handle.begin_drawing(&thread);
+        dr.clear_background(Color::BLACK);
+        gui.update(&mut dr);
     }
 }

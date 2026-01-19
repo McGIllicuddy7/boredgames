@@ -10,6 +10,8 @@ pub mod rtils_useful {
     use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, Mutex};
     use std::thread::yield_now;
+
+    use serde::{Deserialize, Serialize};
     pub trait CopyFromStr {
         fn copy_from_str(&mut self, string: &str) -> bool;
     }
@@ -923,5 +925,29 @@ pub mod rtils_useful {
             throw!(e);
         }
         Ok(buf)
+    }
+
+
+    #[repr(transparent)]
+    #[derive(Clone, Debug, Copy,Hash, PartialEq, Eq,PartialOrd, Ord, Serialize, Deserialize)]
+    pub struct Immutable<T>{
+        x:T
+    }
+    impl<T> Immutable<T>{
+        pub fn new(x:T)->Self{
+            Self { x }
+        }
+        pub fn get(&self)->&T{
+            &self.x
+        }
+        pub fn unsafe_get_mut_please_dont_use(&mut self)->&mut T{
+            &mut self.x
+        }
+        pub unsafe fn get_mut(&mut self)->&mut T{
+            &mut self.x
+        }
+        pub fn take(self)->T{
+            self.x
+        }
     }
 }

@@ -1,12 +1,13 @@
-use std::{cell::Cell, fmt::Debug, rc::Rc, sync::atomic::AtomicBool};
+use std::{cell::Cell, collections::{BTreeMap, HashMap, HashSet}, fmt::Debug, rc::Rc, sync::{Arc, Mutex}};
 
 use raylib::{
-    RaylibHandle, RaylibThread,
     color::Color,
     ffi::MouseButton,
     math::{Rectangle, Vector2},
-    prelude::{RaylibDraw, RaylibDrawHandle},
+    prelude::{RaylibDraw, RaylibDrawHandle, RaylibScissorModeExt},
 };
+
+use crate::{state::{Exception, Immutable, Throws}, throw};
 pub const SCALE_X: f32 = 16.;
 pub const SCALE_Y: f32 = 20.;
 #[derive(Clone)]
@@ -256,7 +257,7 @@ impl TGuiDraw {
                     w: min_w,
                 }
             }
-            TGuiDraw::BoxedGuiObject {obj  }=>{
+            TGuiDraw::BoxedGuiObject {obj:_  }=>{
                 todo!()
             }
         }
@@ -423,13 +424,16 @@ impl TGuiDraw {
                     sy = *h - sy - 1;
                 }
                 draw_rectangle(draw_handle, *x + *w - 1, *y + sy, 1, 1, *color);
+                //:3
+                let mut scissoring = draw_handle.begin_scissor_mode(*x*SCALE_X as i32, *y*SCALE_Y as i32, *w *SCALE_X as i32, *h*SCALE_Y as i32);
                 for i in children {
                     let b = i.get_min_boundary();
-                    if b.y < *y || b.y >= *y + *h {
+                    if b.y+b.h < *y || b.y >= *y + *h {
                         continue;
                     }
-                    i.draw(draw_handle);
+                    i.draw(&mut scissoring);
                 }
+                drop(scissoring);
                 let rct = Rectangle {
                     x: *x as f32 * SCALE_X,
                     y: *y as f32 * SCALE_Y,
@@ -446,7 +450,10 @@ impl TGuiDraw {
                     && draw_handle.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT)
                     && delt != 0.0
                 {
-                    let dact = (delt / (*h as f32) * 1000.0 / SCALE_Y).ceil() as i32;
+                    let mut dact = (delt / (*h as f32) * 1000.0 / SCALE_Y).ceil() as i32;
+                    if  !*upside_down{
+                        dact*= -1;
+                    }
                     let mut out = *current_scroll_amount - dact;
                     if out > 999 {
                         out = 999;
@@ -834,9 +841,29 @@ impl TGui {
     pub fn end_div(&mut self) {
         let mut x = self.draw_call_stack.pop().unwrap(); 
         let bounds = x.bounds();
-        if let Some(sb) =x.scroll_box{           
+        if let Some(sb) =x.scroll_box{       
+            let mut min_h = 1000000;
+            let mut max_h = -1000000;
+            let mut hit = false;
+            for i in &x.draw_calls{
+                let bounds = i.get_min_boundary();
+                hit = true;
+                if bounds.y+bounds.h >max_h{
+                    max_h = bounds.y+bounds.h;
+                }
+                if bounds.y<min_h{
+                    min_h = bounds.y;
+                }
+            }
+            let dh = if hit{max_h-min_h-x.h} else{0};
             if let Some(mut y) = self.draw_call_stack.pop(){
-                let shift = (x.h as f32 * x.scroll_amount as f32/1000.0 ) as i32;
+                let mut shift =-((dh +x.padding_x*2)as f32 * x.scroll_amount as f32/1000.0 ) as i32;
+         
+                if x.upside_down{
+                    shift += x.padding_y*2;
+                    shift *= -1;
+                }
+      
                 for i in &mut x.draw_calls{
                     i.shift(shift, true);
                 }
@@ -1091,5 +1118,503 @@ impl TGui {
     pub fn set_cursor(&mut self, x: i32, y: i32) {
         self.cursor_x = x;
         self.cursor_y = y;
+    }
+}
+
+#[repr(transparent)]
+#[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Clone, Copy, Hash)]
+pub struct ElementId{
+    v:u32
+}
+impl ElementId{
+    pub const fn new()->Self{
+        Self { v: 0 }
+    }
+    pub const fn is_valid(&self)->bool{
+        self.v != 0
+    }
+    pub const fn inner(&self)->u32{
+        self.v 
+    }
+}
+
+pub struct TransGui{
+    elements:BTreeMap<ElementId,TransGuiElement>, 
+    roots:Vec<ElementId>,
+    fg_color:Color, 
+    bg_color:Color,
+    name_table:HashMap<String, ElementId>,
+    gui:TGui,
+    scrollbar_outputs:HashMap<ElementId, TGuiOutput<i32>>, 
+    button_outputs:HashMap<ElementId, TGuiOutput<bool>>,
+    mutated:bool,
+    modifications:usize,
+    hidden:HashSet<ElementId>,
+}
+
+
+
+#[derive(Clone)]
+pub enum TransGuiElement{
+    String{s:String, color:Color, parent:Immutable<ElementId>},
+    Box{h:i32, w:i32, color:Color,parent:Immutable<ElementId>},
+    Button{color:Color, on_pressed:Arc<Mutex<dyn FnMut(&mut TransGui, ElementId)>> ,parent:Immutable<ElementId>, text:String},
+    Container{children:Immutable<Vec<ElementId>>, horizontal:bool,parent:Immutable<ElementId>, color:Color, upside_down:bool},
+    ScrollBox{scroll_amount:i32, w:i32, h:i32, children:Immutable<Vec<ElementId>>, parent:Immutable<ElementId>, color:Color, upside_down:bool},
+    BoxedGuiObject{obj:Box<dyn GuiObject>, parent:Immutable<ElementId>}
+}
+
+impl TransGuiElement{
+    pub fn get_parent(&self)->ElementId{
+        match self{
+            TransGuiElement::String { s:_, color:_, parent } => {
+                *parent.get()
+            }
+            TransGuiElement::Box { h:_, w:_, color:_, parent } =>{
+                *parent.get()
+            }
+            TransGuiElement::Button { color:_, on_pressed:_, parent, text:_ } =>{
+                *parent.get()
+            }
+            TransGuiElement::Container { children:_, horizontal:_, parent, color:_ , upside_down:_} => {
+                *parent.get()
+            }
+            TransGuiElement::ScrollBox { scroll_amount:_, w:_, h:_, children:_, parent, color:_ , upside_down:_} => {
+                *parent.get()
+            }
+            TransGuiElement::BoxedGuiObject { obj:_, parent } => {
+                *parent.get()
+            }
+        }
+    }
+    fn set_parent(&mut self, new_parent:ElementId){
+        match self{
+            TransGuiElement::String { s:_, color:_, parent } => {
+                *parent.unsafe_get_mut_please_dont_use() = new_parent;
+            }
+            TransGuiElement::Box { h:_, w:_, color:_, parent } =>{
+                *parent.unsafe_get_mut_please_dont_use() = new_parent;
+            }
+            TransGuiElement::Button { color:_, on_pressed:_, parent, text:_ } =>{
+                *parent.unsafe_get_mut_please_dont_use() = new_parent;
+            }
+            TransGuiElement::Container { children:_, horizontal:_, parent, color:_, upside_down:_ } => {
+                *parent.unsafe_get_mut_please_dont_use() = new_parent;
+            }
+            TransGuiElement::ScrollBox { scroll_amount:_, w:_, h:_, children:_, parent , color:_, upside_down:_} => {
+                *parent.unsafe_get_mut_please_dont_use() = new_parent;
+            }
+            TransGuiElement::BoxedGuiObject { obj:_, parent } => {
+                *parent.unsafe_get_mut_please_dont_use() = new_parent;
+            }
+        }
+    }
+}
+
+impl TransGui{
+    pub fn new()->Self{
+        Self { elements: BTreeMap::new(), roots:Vec::new(), fg_color:Color::GREEN, bg_color:Color::GREEN, name_table:HashMap::new() , gui:TGui::new(), mutated:false, scrollbar_outputs:HashMap::new(), button_outputs:HashMap::new(), 
+        modifications:0, hidden:HashSet::new()}
+    }
+
+    pub fn new_element(&mut self,e:TransGuiElement)->ElementId{
+        self.mutated = true;
+        self.modifications+=1;
+        let mut idx = 0;
+        for i in 1..u32::MAX{
+            let id = ElementId{v:i};
+            if  !self.elements.contains_key(&id){
+                idx  = i;
+                break;
+            }
+        }
+        assert!(idx != 0);
+        let out =  ElementId { v: idx };
+        self.elements.insert(out,e);
+        out
+    }
+
+    pub fn new_text(&mut self, text:impl Into<String>)->ElementId{
+        self.mutated = true;
+        self.modifications+=1;
+        let e = TransGuiElement::String { s: text.into(), color: self.fg_color, parent: Immutable::new(ElementId::new()) };
+        self.new_element(e)
+    }
+
+    pub fn new_box(&mut self, h:i32, w:i32)->ElementId{
+        self.mutated = true;
+        self.modifications+=1;
+        let e = TransGuiElement::Box { h, w, color: self.fg_color, parent: Immutable::new(ElementId::new())} ;
+        self.new_element(e)
+    }
+
+    pub fn new_button(&mut self, on_click:impl FnMut(&mut TransGui,ElementId)+'static, text:impl  Into<String>)->ElementId{
+        self.mutated = true;
+        self.modifications+=1;
+        let e = TransGuiElement::Button { color: self.fg_color, on_pressed: Arc::new(Mutex::new(on_click)), parent:Immutable::new(ElementId::new()) , text:text.into()};
+        self.new_element(e)
+    }
+
+    pub fn new_section(&mut self)->ElementId{
+        self.mutated = true;
+        self.modifications+=1;
+        let e = TransGuiElement::Container { children:Immutable::new(Vec::new()), horizontal: false, parent: Immutable::new(ElementId::new()), color:self.bg_color, upside_down:false};
+        self.new_element(e)
+    }
+
+
+    pub fn new_section_upside_down(&mut self)->ElementId{
+        self.mutated = true;
+        self.modifications+=1;
+        let e = TransGuiElement::Container { children:Immutable::new(Vec::new()), horizontal: false, parent: Immutable::new(ElementId::new()), color:self.bg_color, upside_down:true};
+        self.new_element(e)
+    }
+    pub fn new_horizontal_section(&mut self)->ElementId{
+        self.mutated = true;
+        self.modifications+=1;
+        let e = TransGuiElement::Container { children:Immutable::new(Vec::new()), horizontal: true, parent: Immutable::new(ElementId::new()), color:self.bg_color, upside_down:false};
+        self.new_element(e)
+    }
+
+    pub fn new_scroll_box(&mut self, w:i32, h:i32)->ElementId{
+        self.mutated = true;
+        self.modifications+=1;
+        let e = TransGuiElement::ScrollBox {scroll_amount:0, w, h ,children:Immutable::new(Vec::new()), parent: Immutable::new(ElementId::new()), color:self.bg_color, upside_down:false};
+        self.new_element(e)
+    }
+
+    pub fn new_scroll_box_upside_down(&mut self, w:i32, h:i32)->ElementId{
+        self.mutated = true;
+        self.modifications+=1;
+        let e = TransGuiElement::ScrollBox {scroll_amount:0, w, h ,children:Immutable::new(Vec::new()), parent: Immutable::new(ElementId::new()), color:self.bg_color, upside_down:true};
+        self.new_element(e)
+    }
+
+    pub fn new_gui_object(&mut self,obj:Box<dyn GuiObject>)->ElementId{
+        self.mutated = true;
+        self.modifications+=1;
+        let e = TransGuiElement::BoxedGuiObject { obj, parent:Immutable::new(ElementId::new())};
+        self.new_element(e)
+    }
+
+    pub fn attach_to_doc(&mut self, id:ElementId){
+        self.modifications+=1;
+        self.mutated = true;
+        self.detach_element(id);
+        self.roots.push(id);
+    }
+
+    pub fn attach_to_element(&mut self,id:ElementId, parent_to:ElementId){
+        self.mutated =true;
+        self.modifications+=1;
+        self.detach_element(id);
+        let prs = self.get_element(parent_to).unwrap();
+        match prs{
+            TransGuiElement::Container { children, horizontal:_, parent:_ , color:_, upside_down:_}=>{
+                children.unsafe_get_mut_please_dont_use().push(id);
+            }
+            TransGuiElement::ScrollBox { scroll_amount:_, w:_, h:_, children, parent:_, color:_ ,upside_down:_}=>{
+                children.unsafe_get_mut_please_dont_use().push(id);
+            }
+            _=>{
+                todo!()
+            }
+        }
+    }
+
+    pub fn detach_element(&mut self, id:ElementId){
+        if !id.is_valid(){
+            return;
+        }
+        self.mutated = true;
+        self.modifications+=1;
+        let element = self.get_element(id).unwrap();
+        let parent = element.get_parent();
+        let is_valid = parent.is_valid();
+        element.set_parent(ElementId::new());
+        if is_valid{
+            let pr = self.get_element(parent).unwrap();
+            match pr{
+                TransGuiElement::Container { children, horizontal:_, parent:_ , color:_, upside_down:_} => {
+                    let mut idx = -1;
+                    for i in 0..children.get().len(){
+                        if children.unsafe_get_mut_please_dont_use()[i] == id{
+                            idx = i as i32;
+                            break;
+                        }
+                    }
+                    if idx == -1{
+                        todo!()
+                    }else{
+                        children.unsafe_get_mut_please_dont_use().remove(idx as usize);
+                    }
+                }
+                TransGuiElement::ScrollBox { scroll_amount:_, w:_, h:_, children, parent :_, color:_, upside_down:_} => {
+                    let mut idx = -1;
+                    for i in 0..children.get().len(){
+                        if children.unsafe_get_mut_please_dont_use()[i] == id{
+                            idx = i as i32;
+                            break;
+                        }
+                    }
+                    if idx == -1{
+                        todo!()
+                    }else{
+                        children.unsafe_get_mut_please_dont_use().remove(idx as usize);
+                    }
+                }
+                _=>{
+                    todo!()
+                }
+            }
+        }
+        let mut idx = -1;
+        for i in 0..self.roots.len(){
+            if self.roots[i] == id{
+                idx = i as i32;
+                break;
+            }
+        }
+        if idx != -1{
+            self.roots.remove(idx as usize); 
+        }
+
+    }
+
+    pub fn get_element(&mut self, id:ElementId)->Throws<&mut TransGuiElement>{
+        self.mutated =true;
+        self.modifications+=1;
+        if let Some(x) = self.elements.get_mut(&id){
+            Ok(x)
+        }else{
+            throw!(format!("element not found:{:#?}", id));
+        }
+    }
+    
+    pub fn get_element_const(&self, id:ElementId)->Throws<& TransGuiElement>{
+        if let Some(x) = self.elements.get(&id){
+            Ok(x)
+        }else{
+            throw!(format!("element not found:{:#?}", id));
+        }
+    }
+
+    pub fn get_name_id(&self, s:&str)->ElementId{
+        if let Some(id)  = self.name_table.get(s){
+            *id
+        }else{
+            ElementId::new()
+        }
+    }
+
+    pub fn remove_name(&mut self, s:&str){
+        self.name_table.remove(s);
+    }
+
+    pub fn hide_element(&mut self, id:ElementId){
+        self.modifications+=1;
+        self.mutated = true;
+        self.hidden.insert(id);
+    }
+
+    pub fn reveal_element(&mut self, id:ElementId){
+        self.modifications+=1;
+        self.mutated = true;
+        self.hidden.remove(&id);
+    }
+
+    pub fn name_element(&mut self, id:ElementId, name:impl Into<String>){ 
+        self.name_table.insert(name.into(), id);
+    }
+
+    fn render(&mut self, handle: &mut RaylibDrawHandle){
+        self.gui.draw_frame(handle);
+    }
+
+    fn recompute_element(&mut self, id:ElementId){
+        if self.hidden.contains(&id){
+            return;
+        }
+        let g = self.get_element_const(id).unwrap().clone();
+        match g{
+            TransGuiElement::String { s, color, parent:_ } => {
+                self.gui.set_fg_color(color);
+                self.gui.add_text(&*s);
+            }
+            TransGuiElement::Box { h, w, color, parent:_ } => {
+                self.gui.set_fg_color(color);
+                self.gui.add_box(w, h);
+            }
+            TransGuiElement::Button { color, on_pressed:_, parent :_, text
+            } => {
+                self.gui.set_fg_color(color);
+                let l = text.len();
+                let w = if l>15{
+                    17
+                }else{
+                    l as i32+2
+                };
+                let h = get_string_bounds(&text, 0,0, w ).h+3;
+                let pressed = self.gui.add_button(w, h, text);
+                self.button_outputs.insert(id, pressed);
+            } 
+            TransGuiElement::Container { children, horizontal, parent:_ , color, upside_down} =>{
+                self.gui.set_bg_color(color);
+                if horizontal{
+                    self.gui.begin_div_hor();
+                }else{
+                    self.gui.begin_div();
+                }
+                    if upside_down{
+                    self.gui.set_upside_down();
+                }else{
+                    self.gui.set_rightside_up();
+                }
+                for i in children.get(){
+                    self.recompute_element(*i);
+                }
+                self.gui.end_div();
+            }
+            TransGuiElement::ScrollBox { scroll_amount, w, h, children, parent:_, color, upside_down } =>{
+                self.gui.set_bg_color(color);
+                let x = self.gui.begin_scrollbox(w, h, scroll_amount);
+                self.scrollbar_outputs.insert(id, x);
+                if upside_down{
+                    self.gui.set_upside_down();
+                }else{
+                    self.gui.set_rightside_up();
+                }
+      
+                for i in children.get(){
+                    self.recompute_element(*i);
+                }
+                self.gui.end_div();
+            }
+            TransGuiElement::BoxedGuiObject { obj:_, parent :_} =>{
+                todo!()
+            }
+        }
+    }
+
+    fn recompute(&mut self){
+        self.button_outputs.clear();
+        self.scrollbar_outputs.clear();
+        self.gui.begin_frame();
+        let ids = self.roots.clone();
+        for i in ids{
+            self.recompute_element(i);
+        }
+    }
+
+    pub fn update(&mut self, handle: &mut RaylibDrawHandle){
+        self.recompute();
+        self.render(handle);
+        self.handle_updates();
+        if self.should_collect(){
+            self.collect();
+        }
+    }
+
+    fn handle_updates(&mut self){
+        self.mutated = false;
+        let mut to_run = Vec::new();
+        for (id, button) in &self.button_outputs{
+            if button.take().unwrap(){
+                let e = self.get_element_const(*id).unwrap();
+                match e{
+                    TransGuiElement::Button { color:_, on_pressed, parent:_, text:_ }=>{
+                        to_run.push((*id, on_pressed.clone()));
+                    }
+                    _=>{
+                        todo!()
+                    }
+                }
+            }
+        }
+        let mut scroll_updates = Vec::new();
+        for (id, scroll) in &self.scrollbar_outputs{
+            let x = self.get_element_const(*id).unwrap();
+            let Some(s )= scroll.take()else{
+                continue;
+            };
+            match x{
+                TransGuiElement::ScrollBox { scroll_amount, w:_, h:_, children:_, parent:_, color:_ ,upside_down :_} => {
+                    if s != *scroll_amount{
+                        scroll_updates.push((*id, s));
+                    }
+                }
+                _=>{
+                    todo!()
+                }
+            }
+        }
+        for (id, amount) in scroll_updates{
+            let Ok(x) = self.get_element(id) else{
+                continue;
+            };
+            match x{
+                    TransGuiElement::ScrollBox { scroll_amount, w:_, h:_, children:_, parent:_, color:_ , upside_down:_}=>{
+                        *scroll_amount = amount;
+                    }
+                    _=>{
+                        todo!()
+                    }
+                }
+        }
+        for (id, tor) in to_run{
+            let mut func = tor.lock().unwrap();
+            (func)(self,id);
+        }
+    }
+
+    fn collect_element(&self, element:ElementId, reachable_set:&mut HashSet<ElementId>){
+        if reachable_set.contains(&element){
+            return;
+        }
+        if self.get_element_const(element).is_err(){
+            return;
+        }
+        reachable_set.insert(element);
+        match self.get_element_const(element).unwrap(){
+            TransGuiElement::Container { children, horizontal:_, parent:_, color:_,upside_down:_ } => {
+                for i in children.get(){
+                    self.collect_element(*i, reachable_set);
+                }
+            }
+            TransGuiElement::ScrollBox { scroll_amount:_, w:_, h:_, children, parent:_, color:_ ,upside_down:_} => {
+                for i in children.get(){
+                    self.collect_element(*i, reachable_set);
+                }
+                
+            }
+            _=>{
+                return;
+            }
+        }
+    }
+
+    fn collect(&mut self){
+        let mut reachable_set = HashSet::new();
+        for i in& self.roots{
+            self.collect_element(*i, &mut reachable_set);
+        }
+        for (_,id) in &self.name_table{
+            reachable_set.insert(*id);
+        }
+        let mut purge_list = Vec::new();
+        for (id, _) in &self.elements{
+            if !reachable_set.contains(id){
+                purge_list.push(*id);
+            }
+        }
+        for i in purge_list{
+            self.elements.remove(&i);
+            self.hidden.remove(&i);
+        }
+        self.modifications = 0;
+    }
+
+    pub fn should_collect(&self)->bool{
+        self.modifications>20
     }
 }
