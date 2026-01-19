@@ -578,7 +578,6 @@ pub fn draw_string(
     max_width: i32,
     color: Color,
 ) {
-    // println!("{}:{}, {}", string, x, y);
     let mut dx = x;
     let w = x + max_width;
     let mut dy = y;
@@ -681,7 +680,6 @@ pub fn set_bounds(bs: &mut [TGuiDraw], b: Boundary, vertical: bool) {
             x_coord += bounds.w;
         } 
         i.update_bounds(bounds);
-      //  println!("bounds:{:#?}", i);
     }
 }
 
@@ -1060,8 +1058,6 @@ impl TGui {
     pub fn draw_frame(&mut self, draw_handle: &mut RaylibDrawHandle) {
         self.end_div();
         assert!(self.draw_call_stack.is_empty());
-        println!("setting bounds");
-        println!("before draw calls:{:#?}", self.draw_calls);
         set_bounds(
             &mut self.draw_calls,
             Boundary {
@@ -1072,7 +1068,6 @@ impl TGui {
             },
             false,
         );
-        println!("after draw calls:{:#?}", self.draw_calls);
         for i in &mut self.draw_calls {
             i.draw(draw_handle);
         }
@@ -1341,6 +1336,26 @@ impl TransGui{
                 todo!()
             }
         }
+        match self.get_element(id).unwrap(){
+            TransGuiElement::String { s: _, color: _, parent } => {
+                *parent.unsafe_get_mut_please_dont_use() = parent_to;
+            }
+            TransGuiElement::Box { h: _, w: _, color: _, parent } => {
+                *parent.unsafe_get_mut_please_dont_use() = parent_to;
+            }
+            TransGuiElement::Button { color: _, on_pressed: _, parent, text: _ } => {
+                *parent.unsafe_get_mut_please_dont_use() = parent_to;
+            }
+            TransGuiElement::Container { children: _, horizontal: _, parent, color: _, upside_down: _ } => {
+                *parent.unsafe_get_mut_please_dont_use() = parent_to;
+            }
+            TransGuiElement::ScrollBox { scroll_amount: _, w: _, h: _, children: _, parent, color: _, upside_down: _ } => {
+                *parent.unsafe_get_mut_please_dont_use() = parent_to;
+            }
+            TransGuiElement::BoxedGuiObject { obj: _, parent } => {
+                *parent.unsafe_get_mut_please_dont_use() = parent_to;
+            }
+        }
     }
 
     pub fn detach_element(&mut self, id:ElementId){
@@ -1367,7 +1382,9 @@ impl TransGui{
                     if idx == -1{
                         todo!()
                     }else{
+                        let prev_len = children.get().len();
                         children.unsafe_get_mut_please_dont_use().remove(idx as usize);
+                        assert!(children.get().len() == prev_len-1);
                     }
                 }
                 TransGuiElement::ScrollBox { scroll_amount:_, w:_, h:_, children, parent :_, color:_, upside_down:_} => {
@@ -1381,7 +1398,9 @@ impl TransGui{
                     if idx == -1{
                         todo!()
                     }else{
+                        let prev_len = children.get().len();
                         children.unsafe_get_mut_please_dont_use().remove(idx as usize);
+                        assert!(children.get().len() == prev_len-1);
                     }
                 }
                 _=>{
@@ -1461,16 +1480,27 @@ impl TransGui{
             }
         }
         self.remove_children(element);
+        let ele = self.get_element(element).unwrap();
+        match ele{
+            TransGuiElement::ScrollBox { scroll_amount:_, w:_, h:_, children, parent:_, color:_, upside_down:_ }=>{
+                println!("{:#?}", children.get().len());
+            }
+            TransGuiElement::Container { children, horizontal:_, parent:_, color:_, upside_down:_ }=>{
+                println!("{:#?}", children.get().len());
+            }
+            _=>{
+                todo!()
+            }
+        }
+        self.list_cache.insert(element,Box::new(list.to_vec()));
         for i in list{
             let e = ce(self, i);
             self.attach_to_element(e, element);
         }
-    
     }
     pub fn remove_children(&mut self, elem:ElementId){
         let e = self.get_element(elem).unwrap();
         match e.clone(){
-
             TransGuiElement::Container { children, horizontal:_, parent:_, color:_, upside_down:_ } => {
                 for i in children.get(){
                     self.detach_element(*i);
@@ -1564,10 +1594,15 @@ impl TransGui{
     }
 
     pub fn update(&mut self, handle: &mut RaylibDrawHandle){
+       // println!("recomputing");
         self.recompute();
+        //println!("rendering");
         self.render(handle);
+        //println!("handling updates");
         self.handle_updates();
+        //println!("checking if should collect");
         if self.should_collect(){
+         //   println!("collecting");
             self.collect();
         }
     }
@@ -1680,38 +1715,113 @@ extern crate transir;
 pub enum TransIr{
     String{s:String, color:Option<Color>, name:Option<String>}, 
     Box{h:i32, w:i32, color:Option<Color>, name:Option<String>}, 
-    Button{color:Option<Color>, on_pressed:Arc<Mutex<dyn FnMut(&mut TransGui, ElementId)>>, text:String, name:Option<String>}, 
+    Button{color:Option<Color>, on_pressed:Arc<Mutex<dyn FnMut(&mut TransGui, ElementId)+'static>>, text:String, name:Option<String>}, 
     Container{
         children:Vec<TransIr>, horizontal:bool, color:Option<Color>, upside_down:bool, name:Option<String>,
     },
     ScrollBox{
-        w:i32, h:i32, children:Vec<ElementId>, color:Option<Color>, upside_down:bool, name:Option<String>
+        w:i32, h:i32, children:Vec<TransIr>, color:Option<Color>, upside_down:bool, name:Option<String>
     }
 }
 impl TransIr{
-    pub fn add_to_gui(self, _gui:&mut TransGui){
+    pub fn add_to_gui(self, gui:&mut TransGui)->ElementId{
         match self{
-            TransIr::String { s: _, color: _,name: _ } => {
-                
+            TransIr::String { s, color, name} => {
+                if let Some(c) = color{
+                    gui.fg_color = c;
+                };
+                let e = gui.new_text(s);
+                if let Some(name) = name{
+                    gui.name_element(e, name);
+                };
+                e
             }
-            TransIr::Box { h: _, w: _, color: _,name: _ } => {
-
+            TransIr::Box { h, w, color ,name} => {
+                if let Some(c) = color{
+                    gui.fg_color = c;
+                };
+                let e = gui.new_box(h, w);
+                if let Some(name) = name{
+                    gui.name_element(e, name);
+                };
+                e
             }
-            TransIr::Button { color: _, on_pressed: _, text: _, name: _ } =>{
-
+            TransIr::Button { color, on_pressed, text, name } =>{
+                if let Some(c) = color{
+                    gui.fg_color = c;
+                };
+                let e = gui.new_button(|_,_|{}, text);
+                let elem = gui.get_element(e).unwrap();
+                let op = on_pressed;
+                match elem{
+                    TransGuiElement::Button { color:_, on_pressed, parent:_, text:_ }=>{
+                        *on_pressed = op;
+                    }
+                    _=>{
+                        todo!()
+                    }
+                };
+                if let Some(name) = name{
+                    gui.name_element(e, name);
+                };
+                e
             }
-            TransIr::Container { children: _, horizontal: _, color: _, upside_down: _ , name: _} => {
-
+            TransIr::Container { children , horizontal, color, upside_down , name} => {
+                if let Some(c) = color{
+                    gui.fg_color = c;
+                }
+                let elem =if horizontal{
+                    gui.new_horizontal_section()
+                }else if upside_down{
+                    gui.new_section_upside_down()
+                } else{gui.new_section()};
+                if let Some(name) = name{
+                    gui.name_element(elem, name);
+                }
+                let mut child_vec = Vec::new();
+                for i in children{
+                if let Some(c) = color{
+                    gui.fg_color = c;
+                } 
+                    child_vec.push(i.add_to_gui(gui));
+                }
+                for i in child_vec{
+                    gui.attach_to_element(i, elem);
+                }
+                elem
             }
-            TransIr::ScrollBox { w: _, h: _, children: _, color: _, upside_down: _ ,name: _} => {
-
+            TransIr::ScrollBox { w, h, children, color, upside_down ,name} => {
+                if let Some(c) = color{
+                    gui.fg_color = c;
+                }
+                let elem =
+                    if upside_down{
+                        gui.new_scroll_box_upside_down(w, h)
+                    } else{
+                        gui.new_scroll_box(w,h)
+                    };
+                if let Some(name) = name{
+                    gui.name_element(elem, name);
+                }
+                let mut child_vec = Vec::new();
+                for i in children{
+                    if let Some(c) = color{
+                        gui.fg_color = c;
+                    } 
+                    child_vec.push(i.add_to_gui(gui));
+                }
+                for i in child_vec{
+                    gui.attach_to_element(i, elem);
+                }
+                elem
             }
         }
     }
     pub fn to_gui(list:Vec<Self>)->TransGui{
         let mut out = TransGui::new();
         for i in list{
-            i.add_to_gui(&mut out);
+            let elem = i.add_to_gui(&mut out);
+            out.attach_to_doc(elem);
         }
         out
     }

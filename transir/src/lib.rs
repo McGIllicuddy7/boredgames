@@ -1,4 +1,4 @@
-use std::{collections::HashMap};
+use std::collections::HashMap;
 
 use proc_macro::{TokenStream, TokenTree};
 #[derive(Clone)]
@@ -6,16 +6,14 @@ enum LispLike<T> {
     Value { v: T },
     List { v: Vec<LispLike<T>> },
 }
-impl LispLike<TokenTree>{
-    fn flatten(&self)->String{
-        match self{
-            Self::Value { v }=>{
-                v.to_string()
-            }
-            Self::List{v}=>{
+impl LispLike<TokenTree> {
+    fn flatten(&self) -> String {
+        match self {
+            Self::Value { v } => v.to_string(),
+            Self::List { v } => {
                 let mut out = String::new();
-                for i in v{
-                    if out != ""{
+                for i in v {
+                    if out != "" {
                         out += " ";
                     }
                     out += &i.flatten();
@@ -55,7 +53,7 @@ fn parse_item(item: LispLike<TokenTree>) -> String {
         LispLike::Value { v } => {
             format!("{}", v.to_string())
         }
-        LispLike::List { v} => {
+        LispLike::List { v } => {
             if v.is_empty() {
                 format!("")
             } else {
@@ -65,284 +63,286 @@ fn parse_item(item: LispLike<TokenTree>) -> String {
                     LispLike::Value { v } => {
                         let s = v.to_string();
                         match s.as_str() {
-                            "div"=>{
+                            "div" => {
                                 let mut hs = HashMap::new();
                                 let mut iter = list.into_iter();
                                 let _ = iter.next();
                                 let out;
-                                loop{
+                                loop {
                                     let x = iter.next().unwrap();
-                                    let s= x.flatten();
-                                    if s =="reverse"{
+                                    let s = x.flatten();
+                                    if s == "reverse" {
                                         hs.insert("reverse", None);
-                                    }else if s== "color"{
+                                    } else if s == "color" {
                                         let n = iter.next().unwrap();
                                         hs.insert("color", Some(n.flatten()));
-                                    }else if s == "horizontal"{
+                                    } else if s == "horizontal" {
                                         hs.insert("horizontal", None);
-                                    }else if s== "name"{
+                                    } else if s == "name" {
                                         let eq = iter.next().unwrap();
-                                        if eq.flatten() != "="{
+                                        if eq.flatten() != "=" {
                                             todo!();
                                         }
                                         let name = iter.next().unwrap();
-                                        hs.insert("name", Some(name.flatten()));
-                                    }else{
+                                        hs.insert("name", Some(name.flatten() + ".to_string()"));
+                                    } else {
                                         out = x;
                                         break;
                                     }
                                 }
                                 let mut string = String::new();
-                                match out{
-                                    LispLike::List { v }=>{
-                                        for i in v{
-                                            if string != ""{
+                                match out {
+                                    LispLike::List { v } => {
+                                        for i in v {
+                                            if string != "" {
                                                 string += ",";
                                             }
-                                            string +=&parse_item(i);
+                                            string += &parse_item(i);
                                         }
                                     }
-                                    LispLike::Value { v:_ }=>{
+                                    LispLike::Value { v: _ } => {
                                         todo!()
                                     }
                                 }
-                                let color = if hs.contains_key("color"){
+                                let color = if hs.contains_key("color") {
                                     hs["color"].clone().unwrap_or("None".to_string())
-                                }else{
+                                } else {
                                     "None".to_string()
                                 };
-                                let horizontal = if hs.contains_key("horizontal"){
+                                let horizontal = if hs.contains_key("horizontal") {
                                     "true"
-                                }else{
+                                } else {
                                     "false"
                                 };
-                                let upside_down= if hs.contains_key("reverse"){
+                                let upside_down = if hs.contains_key("reverse") {
                                     "true"
-                                }else{
+                                } else {
                                     "false"
                                 };
-                                let name= if hs.contains_key("name"){
+                                let name = if hs.contains_key("name") {
                                     hs["name"].clone().unwrap_or("None".to_string())
-                                }else{
+                                } else {
                                     "None".to_string()
                                 };
                                 format!("TransIr::Container{{
-                                    children:vec![{}], color:{color}, horizontal:{horizontal}, upside_down:{upside_down}, name:{name}
+                                    children:vec![{}], color:{color}.into(), horizontal:{horizontal}.into(), upside_down:{upside_down}, name:{name}.into()
                                 }}", string)
                             }
-                             "scrollbox"=>{
+                            "scrollbox" => {
                                 let mut hs = HashMap::new();
                                 let mut iter = list.into_iter();
                                 let _ = iter.next();
                                 let out;
-                                loop{
+                                loop {
                                     let x = iter.next().unwrap();
-                                    let s= x.flatten();
-                                    if s =="reverse"{
+                                    let s = x.flatten();
+                                    if s == "reverse" {
                                         hs.insert("reverse", None);
-                                    }else if s== "color"{
+                                    } else if s == "color" {
                                         let n = iter.next().unwrap();
                                         hs.insert("color", Some(parse_item(n)));
-                                    }else if s== "name"{
+                                    } else if s == "name" {
                                         let eq = iter.next().unwrap();
-                                        if eq.flatten() != "="{
+                                        if eq.flatten() != "=" {
                                             todo!();
                                         }
                                         let name = iter.next().unwrap();
-                                        hs.insert("name", Some(parse_item(name)));
-                                    } else if s == "w"{
+                                        hs.insert("name", Some(parse_item(name) + ".to_string()"));
+                                    } else if s == "w" {
                                         let w = iter.next().unwrap();
                                         hs.insert("h", Some(parse_item(w)));
-
-                                    }else if s== "h"{
+                                    } else if s == "h" {
                                         let h = iter.next().unwrap();
                                         hs.insert("h", Some(parse_item(h)));
-                                    } else{
+                                    } else {
                                         out = x;
                                         break;
                                     }
                                 }
                                 let mut string = String::new();
-                                match out{
-                                    LispLike::List { v }=>{
-                                        for i in v{
-                                            if string != ""{
+                                match out {
+                                    LispLike::List { v } => {
+                                        for i in v {
+                                            if string != "" {
                                                 string += ",";
                                             }
-                                            string +=&parse_item(i);
+                                            string += &parse_item(i);
                                         }
                                     }
-                                    LispLike::Value { v:_ }=>{
+                                    LispLike::Value { v: _ } => {
                                         todo!()
                                     }
                                 }
-                                let color = if hs.contains_key("color"){
+                                let color = if hs.contains_key("color") {
                                     hs["color"].clone().unwrap_or("None".to_string())
-                                }else{
+                                } else {
                                     "None".to_string()
                                 };
-                                let upside_down= if hs.contains_key("reverse"){
+                                let upside_down = if hs.contains_key("reverse") {
                                     "true"
-                                }else{
+                                } else {
                                     "false"
                                 };
-                                let name= if hs.contains_key("name"){
+                                let name = if hs.contains_key("name") {
                                     hs["name"].clone().unwrap_or("None".to_string())
-                                }else{
+                                } else {
                                     "None".to_string()
                                 };
-                                let h = if hs.contains_key("h"){
+                                let h = if hs.contains_key("h") {
                                     hs["h"].clone().unwrap_or("10".to_string())
-                                }else{
+                                } else {
                                     "10".to_string()
                                 };
-                                let w = if hs.contains_key("w"){
+                                let w = if hs.contains_key("w") {
                                     hs["w"].clone().unwrap_or("10".to_string())
-                                }else{
+                                } else {
                                     "10".to_string()
                                 };
                                 format!("TransIr::ScrollBox{{
-                                    children:vec![{}], color:{color},upside_down:{upside_down}, name:{name}, w:{w}, h:{h}
+                                    children:vec![{}], color:{color}.into(),upside_down:{upside_down}.into(), name:{name}.into(), w:{w}, h:{h}
                                 }}", string)
                             }
-                            "text"=>{
-                                             let mut hs = HashMap::new();
+                            "text" => {
+                                let mut hs = HashMap::new();
                                 let mut iter = list.into_iter();
                                 let _ = iter.next();
                                 let out;
-                                loop{
+                                loop {
                                     let x = iter.next().unwrap();
-                                    let s= x.flatten();if s== "color"{
+                                    let s = x.flatten();
+                                    if s == "color" {
                                         let n = iter.next().unwrap();
                                         hs.insert("color", Some(parse_item(n)));
-                                    }else if s== "name"{
+                                    } else if s == "name" {
                                         let eq = iter.next().unwrap();
-                                        if eq.flatten() != "="{
+                                        if eq.flatten() != "=" {
                                             todo!();
                                         }
                                         let name = iter.next().unwrap();
-                                        hs.insert("name", Some(parse_item(name)));
-                                    } else{
+                                        hs.insert("name", Some(parse_item(name) + ".to_string()"));
+                                    } else {
                                         out = x;
                                         break;
                                     }
                                 }
                                 let string = out.flatten();
-                                let color = if hs.contains_key("color"){
+                                let color = if hs.contains_key("color") {
                                     hs["color"].clone().unwrap_or("None".to_string())
-                                }else{
+                                } else {
                                     "None".to_string()
                                 };
-                                let name= if hs.contains_key("name"){
+                                let name = if hs.contains_key("name") {
                                     hs["name"].clone().unwrap_or("None".to_string())
-                                }else{
+                                } else {
                                     "None".to_string()
                                 };
-                                format!("TransIr::String{{
-                                    name:{name}, color:{color}, s:{}.to_string()
-                                }}", string)
+                                format!(
+                                    "TransIr::String{{
+                                    name:{name}.into(), color:{color}.into(), s:{}.to_string()
+                                }}",
+                                    string
+                                )
                             }
-                            "button"=>{
-                                             let mut hs = HashMap::new();
+                            "button" => {
+                                let mut hs = HashMap::new();
                                 let mut iter = list.into_iter();
                                 let _ = iter.next();
                                 let out;
-                                loop{
+                                loop {
                                     let x = iter.next().unwrap();
-                                    let s= x.flatten();if s== "color"{
+                                    let s = x.flatten();
+                                    if s == "color" {
                                         let n = iter.next().unwrap();
                                         hs.insert("color", Some(parse_item(n)));
-                                    }else if s== "name"{
+                                    } else if s == "name" {
                                         let eq = iter.next().unwrap();
-                                        if eq.flatten() != "="{
+                                        if eq.flatten() != "=" {
                                             todo!();
                                         }
                                         let name = iter.next().unwrap();
                                         hs.insert("name", Some(parse_item(name)));
-                                    } else{
+                                    } else {
                                         out = x;
                                         break;
                                     }
                                 }
-                                let string = out.flatten();
+                                let string = out.flatten()+".to_string()";
                                 let to_call = iter.next().unwrap().flatten();
-                                let color = if hs.contains_key("color"){
+                                let color = if hs.contains_key("color") {
                                     hs["color"].clone().unwrap_or("None".to_string())
-                                }else{
+                                } else {
                                     "None".to_string()
                                 };
-                                let name= if hs.contains_key("name"){
+                                let name = if hs.contains_key("name") {
                                     hs["name"].clone().unwrap_or("None".to_string())
-                                }else{
+                                } else {
                                     "None".to_string()
                                 };
                                 format!("TransIr::Button{{
                                     name:{name}, color:{color}, text:{}, on_pressed:Arc::new(Mutex::new(({})))
                                 }}", string, to_call)
                             }
-                             "box"=>{
+                            "box" => {
                                 let mut hs = HashMap::new();
                                 let mut iter = list.into_iter();
                                 let _ = iter.next();
-                                loop{
-                                    let Some(x) = iter.next()else{
+                                loop {
+                                    let Some(x) = iter.next() else {
                                         break;
                                     };
-                                    let s= x.flatten();if s== "color"{
+                                    let s = x.flatten();
+                                    if s == "color" {
                                         let n = iter.next().unwrap();
                                         hs.insert("color", Some(parse_item(n)));
-                                    }else if s== "name"{
+                                    } else if s == "name" {
                                         let eq = iter.next().unwrap();
-                                        if eq.flatten() != "="{
+                                        if eq.flatten() != "=" {
                                             todo!();
                                         }
                                         let name = iter.next().unwrap();
-                                        hs.insert("name", Some(parse_item(name)));
-                                    } else if s == "w"{
+                                        hs.insert("name", Some(parse_item(name)+".to_string()"));
+                                    } else if s == "w" {
                                         let w = iter.next().unwrap();
                                         hs.insert("h", Some(parse_item(w)));
-
-                                    }else if s== "h"{
+                                    } else if s == "h" {
                                         let h = iter.next().unwrap();
                                         hs.insert("h", Some(parse_item(h)));
-                                    }else{
+                                    } else {
                                         break;
                                     }
                                 }
-                                let color = if hs.contains_key("color"){
+                                let color = if hs.contains_key("color") {
                                     hs["color"].clone().unwrap_or("None".to_string())
-                                }else{
+                                } else {
                                     "None".to_string()
                                 };
-                                let name= if hs.contains_key("name"){
+                                let name = if hs.contains_key("name") {
                                     hs["name"].clone().unwrap_or("None".to_string())
-                                }else{
+                                } else {
                                     "None".to_string()
                                 };
-                                let h = if hs.contains_key("h"){
+                                let h = if hs.contains_key("h") {
                                     hs["h"].clone().unwrap_or("10".to_string())
-                                }else{
+                                } else {
                                     "10".to_string()
                                 };
-                                let w = if hs.contains_key("w"){
+                                let w = if hs.contains_key("w") {
                                     hs["w"].clone().unwrap_or("10".to_string())
-                                }else{
+                                } else {
                                     "10".to_string()
-                                }; 
+                                };
                                 format!("TransIr::Box{{h:{h}, w:{w}, color:{color}, name:{name}}}")
                             }
-                            _ => {
-                                v.to_string()
-                            }
+                            _ => v.to_string(),
                         }
                     }
                     LispLike::List { v } => {
                         let mut out = String::new();
-                        for i in v{
-                            if out != ""{
-                                out+= " ";
+                        for i in v {
+                            if out != "" {
+                                out += " ";
                             }
-                            out +=&i.flatten();
+                            out += &i.flatten();
                         }
                         out
                     }
@@ -359,8 +359,8 @@ pub fn trans(stream: TokenStream) -> TokenStream {
         strings.push(parse_item(i));
     }
     let mut outs = String::new();
-    for i in strings{
-        if outs != ""{
+    for i in strings {
+        if outs != "" {
             outs += ",";
         }
         outs += &i;
