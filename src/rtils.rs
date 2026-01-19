@@ -69,14 +69,15 @@ pub mod rtils_useful {
                         }
                     }
                     if let Some(e) = end_delim
-                        && (e == '{' || e == '}') {
-                            let Some(n) = fmt.next() else {
-                                return false;
-                            };
-                            if n != e {
-                                return false;
-                            }
+                        && (e == '{' || e == '}')
+                    {
+                        let Some(n) = fmt.next() else {
+                            return false;
+                        };
+                        if n != e {
+                            return false;
                         }
+                    }
                     if args_index >= args.len() {
                         return false;
                     }
@@ -706,7 +707,7 @@ pub mod rtils_useful {
                     }
                 }
             }
-            
+
             Out { v: self.v.clone() }
         }
 
@@ -921,145 +922,92 @@ pub mod rtils_useful {
         Ok(buf)
     }
 
-
     #[repr(transparent)]
-    #[derive(Clone, Debug, Copy,Hash, PartialEq, Eq,PartialOrd, Ord, Serialize, Deserialize)]
-    pub struct Immutable<T>{
-        x:T
+    #[derive(Clone, Debug, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+    pub struct Immutable<T> {
+        x: T,
     }
-    impl<T> Immutable<T>{
-        pub fn new(x:T)->Self{
+    impl<T> Immutable<T> {
+        pub fn new(x: T) -> Self {
             Self { x }
         }
-        pub fn get(&self)->&T{
+        pub fn get(&self) -> &T {
             &self.x
         }
-        pub fn unsafe_get_mut_please_dont_use(&mut self)->&mut T{
+        pub fn unsafe_get_mut_please_dont_use(&mut self) -> &mut T {
             &mut self.x
         }
-        pub unsafe fn get_mut(&mut self)->&mut T{
+        pub unsafe fn get_mut(&mut self) -> &mut T {
             &mut self.x
         }
-        pub fn take(self)->T{
+        pub fn take(self) -> T {
             self.x
         }
     }
 
-
-#[derive(Clone, Debug)]
-pub struct Token {
-    pub text: String,
-    pub file: String,
-    pub line: usize,
-}
-
-#[derive(Clone, Debug)]
-pub struct TokenStream {
-    pub tokens: Vec<Token>,
-    pub index: usize,
-}
-
-
-impl AsRef<str> for Token {
-    fn as_ref(&self) -> &str {
-        &self.text
+    #[derive(Clone, Debug)]
+    pub struct Token {
+        pub text: String,
+        pub file: String,
+        pub line: usize,
     }
-}
 
-impl TokenStream {
-    pub fn from_string(s: String, file: String) -> Self {
-        let tokens = tokenize(s, file);
-        Self { tokens, index: 0 }
+    #[derive(Clone, Debug)]
+    pub struct TokenStream {
+        pub tokens: Vec<Token>,
+        pub index: usize,
     }
-    pub fn peek(&self) -> Option<Token> {
-        let mut t = self.clone();
-        t.next()
-    }
-    pub fn insert_next(&mut self, t: Token) {
-        self.tokens.insert(self.index, t);
-    }
-}
 
-impl Iterator for TokenStream {
-    type Item = Token;
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.index < self.tokens.len() {
-            let out = self.tokens[self.index].clone();
-            self.index += 1;
-            Some(out)
-        } else {
-            None
+    impl AsRef<str> for Token {
+        fn as_ref(&self) -> &str {
+            &self.text
         }
     }
-}
 
-pub fn tokenize(s: String, file: String) -> Vec<Token> {
-    enum State {
-        Whitespace,
-        Ident,
-        String,
-        Comment,
-        StringEscaped,
+    impl TokenStream {
+        pub fn from_string(s: String, file: String) -> Self {
+            let tokens = tokenize(s, file);
+            Self { tokens, index: 0 }
+        }
+        pub fn peek(&self) -> Option<Token> {
+            let mut t = self.clone();
+            t.next()
+        }
+        pub fn insert_next(&mut self, t: Token) {
+            self.tokens.insert(self.index, t);
+        }
     }
-    let mut out = Vec::new();
-    let mut buf = String::new();
-    let mut line = 1;
-    let mut state = State::Whitespace;
-    for c in s.chars() {
-        match state {
-            State::Whitespace => {
-                if c == ' ' || c == '\t' {
-                } else if c == '\n' {
-                    line += 1;
-                } else if c == ':'
-                    || c == '+'
-                    || c == '-'
-                    || c == '*'
-                    || c == '/'
-                    || c == '('
-                    || c == ')'
-                    || c == '<'
-                    || c == '>'
-                {
-                    out.push(Token {
-                        text: c.to_string(),
-                        file: file.clone(),
-                        line,
-                    });
-                } else if c == '"' {
-                    buf = String::new();
-                    state = State::String;
-                } else if c == ';' {
-                    buf = String::new();
-                    state = State::Comment;
-                } else {
-                    buf = String::new();
-                    buf.push(c);
-                    state = State::Ident;
-                }
+
+    impl Iterator for TokenStream {
+        type Item = Token;
+        fn next(&mut self) -> Option<Self::Item> {
+            if self.index < self.tokens.len() {
+                let out = self.tokens[self.index].clone();
+                self.index += 1;
+                Some(out)
+            } else {
+                None
             }
-            State::Ident => {
-                if !c.is_whitespace()
-                    && !(c == ':'
-                        || c == '+'
-                        || c == '-'
-                        || c == '*'
-                        || c == '/'
-                        || c == ';'
-                        || c == '('
-                        || c == ')'
-                        || c == '>'
-                        || c == '<')
-                {
-                    buf.push(c);
-                } else {
-                    out.push(Token {
-                        text: buf,
-                        file: file.clone(),
-                        line,
-                    });
-                    buf = String::new();
-                    if c == '\n' {
+        }
+    }
+
+    pub fn tokenize(s: String, file: String) -> Vec<Token> {
+        enum State {
+            Whitespace,
+            Ident,
+            String,
+            Comment,
+            StringEscaped,
+        }
+        let mut out = Vec::new();
+        let mut buf = String::new();
+        let mut line = 1;
+        let mut state = State::Whitespace;
+        for c in s.chars() {
+            match state {
+                State::Whitespace => {
+                    if c == ' ' || c == '\t' {
+                    } else if c == '\n' {
                         line += 1;
                     } else if c == ':'
                         || c == '+'
@@ -1068,60 +1016,110 @@ pub fn tokenize(s: String, file: String) -> Vec<Token> {
                         || c == '/'
                         || c == '('
                         || c == ')'
-                        || c == '>'
                         || c == '<'
+                        || c == '>'
                     {
                         out.push(Token {
                             text: c.to_string(),
                             file: file.clone(),
                             line,
                         });
-                    }
-                    state = if c == ';' {
-                        State::Comment
+                    } else if c == '"' {
+                        buf = String::new();
+                        state = State::String;
+                    } else if c == ';' {
+                        buf = String::new();
+                        state = State::Comment;
                     } else {
-                        State::Whitespace
-                    };
+                        buf = String::new();
+                        buf.push(c);
+                        state = State::Ident;
+                    }
                 }
-            }
-            State::String => {
-                if c == '"' {
-                    buf = "\"".to_string() + &buf + "\"";
-                    out.push(Token {
-                        text: buf,
-                        file: file.clone(),
-                        line,
-                    });
-                    buf = String::new();
-                    state = State::Whitespace;
-                } else if c == '\\' {
-                    state = State::StringEscaped;
-                } else if c == '\n' {
-                    line += 1;
-                } else {
+                State::Ident => {
+                    if !c.is_whitespace()
+                        && !(c == ':'
+                            || c == '+'
+                            || c == '-'
+                            || c == '*'
+                            || c == '/'
+                            || c == ';'
+                            || c == '('
+                            || c == ')'
+                            || c == '>'
+                            || c == '<')
+                    {
+                        buf.push(c);
+                    } else {
+                        out.push(Token {
+                            text: buf,
+                            file: file.clone(),
+                            line,
+                        });
+                        buf = String::new();
+                        if c == '\n' {
+                            line += 1;
+                        } else if c == ':'
+                            || c == '+'
+                            || c == '-'
+                            || c == '*'
+                            || c == '/'
+                            || c == '('
+                            || c == ')'
+                            || c == '>'
+                            || c == '<'
+                        {
+                            out.push(Token {
+                                text: c.to_string(),
+                                file: file.clone(),
+                                line,
+                            });
+                        }
+                        state = if c == ';' {
+                            State::Comment
+                        } else {
+                            State::Whitespace
+                        };
+                    }
+                }
+                State::String => {
+                    if c == '"' {
+                        buf = "\"".to_string() + &buf + "\"";
+                        out.push(Token {
+                            text: buf,
+                            file: file.clone(),
+                            line,
+                        });
+                        buf = String::new();
+                        state = State::Whitespace;
+                    } else if c == '\\' {
+                        state = State::StringEscaped;
+                    } else if c == '\n' {
+                        line += 1;
+                    } else {
+                        buf.push(c);
+                    }
+                }
+                State::StringEscaped => {
                     buf.push(c);
+                    state = State::String;
                 }
-            }
-            State::StringEscaped => {
-                buf.push(c);
-                state = State::String;
-            }
-            State::Comment => {
-                if c == '\n' {
-                    line += 1;
-                    state = State::Whitespace
+                State::Comment => {
+                    if c == '\n' {
+                        line += 1;
+                        state = State::Whitespace
+                    }
                 }
             }
         }
+        if !buf.is_empty() {
+            out.push(Token {
+                text: buf,
+                file,
+                line,
+            });
+        }
+        //println!("{:#?}", out);
+        out
     }
-    if !buf.is_empty() {
-        out.push(Token {
-            text: buf,
-            file,
-            line,
-        });
-    }
-    //println!("{:#?}", out);
-    out
-}   
 }

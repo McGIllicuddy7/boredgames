@@ -288,12 +288,13 @@ impl ClientData {
     pub fn new(mut connection: MessagePipe, username: String) -> Throws<Self> {
         let msg = connection.read_message_blocking()?;
         if let MessageData::HandShake {
-                mut state,
-                allocator_start,
-                images,
-                users,
-                user_id,
-            } = msg.data {
+            mut state,
+            allocator_start,
+            images,
+            users,
+            user_id,
+        } = msg.data
+        {
             state.self_id = user_id;
             connection.write_message(Message {
                 meta: MessageMetaData { sender: user_id },
@@ -440,7 +441,6 @@ impl ClientData {
     }
 
     pub fn take_new_messages(&mut self) -> Vec<(String, String)> {
-        
         self.messages.clone()
     }
 
