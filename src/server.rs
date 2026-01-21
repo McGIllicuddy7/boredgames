@@ -120,7 +120,7 @@ impl Server {
         let base = global.alloc_bloc();
         let id = IdAllocator::new(base);
         let self_id = id.alloc();
-        
+
         Ok(Self {
             this_state: State::new(self_id),
             clients: HashMap::new(),

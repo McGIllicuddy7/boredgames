@@ -10,7 +10,6 @@ pub mod rtils_useful {
     use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, Mutex};
     use std::thread::yield_now;
-    
 
     use serde::{Deserialize, Serialize};
     pub trait CopyFromStr {
@@ -934,9 +933,6 @@ pub mod rtils_useful {
         }
         pub fn get(&self) -> &T {
             &self.x
-        }
-        pub fn unsafe_get_mut_please_dont_use(&mut self) -> &mut T {
-            &mut self.x
         }
         pub unsafe fn get_mut(&mut self) -> &mut T {
             &mut self.x

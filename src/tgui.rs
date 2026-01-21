@@ -1,8 +1,4 @@
-use std::{
-    cell::Cell,
-    fmt::Debug,
-    rc::Rc,
-};
+use std::{cell::Cell, fmt::Debug, rc::Rc};
 
 use raylib::{
     color::Color,
@@ -11,12 +7,13 @@ use raylib::{
     prelude::{RaylibDraw, RaylibDrawHandle, RaylibScissorModeExt},
 };
 
-pub fn scale_x(handle: &mut RaylibDrawHandle)->f32{
-    16.0*(handle.get_screen_width() as f32)/1000.0
+pub fn scale_x(handle: &mut RaylibDrawHandle) -> f32 {
+    16.0 * (handle.get_screen_width() as f32) / 1000.0
 }
-pub fn scale_y(handle:&mut RaylibDrawHandle)->f32{
-    20.0*(handle.get_screen_height() as f32)/1000.0
+pub fn scale_y(handle: &mut RaylibDrawHandle) -> f32 {
+    20.0 * (handle.get_screen_height() as f32) / 1000.0
 }
+
 #[derive(Clone)]
 pub struct TGuiOutput<T> {
     output: Rc<Cell<Option<T>>>,
@@ -78,6 +75,7 @@ pub enum TGuiDraw {
         w: i32,
         h: i32,
         color: Color,
+        final_bounds: TGuiOutput<Boundary>,
     },
     DrawButton {
         x: i32,
@@ -114,6 +112,13 @@ pub enum TGuiDraw {
     },
     BoxedGuiObject {
         obj: Box<dyn GuiObject>,
+    },
+    Image {
+        path: String,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
     },
 }
 
@@ -173,6 +178,7 @@ impl TGuiDraw {
                 w,
                 h,
                 color: _,
+                final_bounds: _,
             } => Boundary {
                 x: *x,
                 y: *y,
@@ -272,6 +278,18 @@ impl TGuiDraw {
             TGuiDraw::BoxedGuiObject { obj: _ } => {
                 todo!()
             }
+            TGuiDraw::Image {
+                x,
+                y,
+                h,
+                w,
+                path: _,
+            } => Boundary {
+                x: *x,
+                y: *y,
+                h: *h,
+                w: *w,
+            },
         }
     }
 
@@ -294,6 +312,7 @@ impl TGuiDraw {
                 w,
                 h,
                 color: _,
+                final_bounds: _,
             } => {
                 *x = b.x;
                 *y = b.y;
@@ -359,6 +378,18 @@ impl TGuiDraw {
             TGuiDraw::BoxedGuiObject { obj } => {
                 obj.update_bounds(b);
             }
+            TGuiDraw::Image {
+                path: _,
+                x,
+                y,
+                w,
+                h,
+            } => {
+                *x = b.x;
+                *y = b.y;
+                *w = b.w;
+                *h = b.h;
+            }
         }
     }
     pub fn draw(&mut self, draw_handle: &mut RaylibDrawHandle) {
@@ -372,8 +403,21 @@ impl TGuiDraw {
             } => {
                 draw_string(draw_handle, string, *x, *y, *max_width, *color);
             }
-            TGuiDraw::DrawBox { x, y, w, h, color } => {
+            TGuiDraw::DrawBox {
+                x,
+                y,
+                w,
+                h,
+                color,
+                final_bounds,
+            } => {
                 draw_rectangle(draw_handle, *x, *y, *w, *h, *color);
+                final_bounds.send(Boundary {
+                    x: *x,
+                    y: *y,
+                    h: *h,
+                    w: *w,
+                });
             }
             TGuiDraw::DrawButton {
                 x,
@@ -443,7 +487,7 @@ impl TGuiDraw {
                     *x * sx as i32,
                     *y * sy as i32,
                     *w * sx as i32,
-                    *h *sy as i32,
+                    *h * sy as i32,
                 );
                 for i in children {
                     let b = i.get_min_boundary();
@@ -469,13 +513,14 @@ impl TGuiDraw {
                     && draw_handle.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT)
                     && delt != 0.0
                 {
-                    let mut dact = (delt / (*h as f32) * 1000.0 / scale_y(draw_handle)).ceil() as i32;
+                    let mut dact =
+                        (delt / (*h as f32) * 1000.0 / scale_y(draw_handle)).ceil() as i32;
                     if !*upside_down {
                         dact *= -1;
                     }
                     let mut out = *current_scroll_amount - dact;
-                    if out > 999 {
-                        out = 999;
+                    if out > 1000 {
+                        out = 1000;
                     }
                     if out < 0 {
                         out = 0;
@@ -488,8 +533,18 @@ impl TGuiDraw {
             TGuiDraw::BoxedGuiObject { obj } => {
                 obj.draw(draw_handle);
             }
+            TGuiDraw::Image {
+                x: _,
+                y: _,
+                w: _,
+                h: _,
+                path: _,
+            } => {
+                todo!()
+            }
         }
     }
+
     pub fn shift(&mut self, amount: i32, vertical: bool) {
         match self {
             TGuiDraw::DrawString {
@@ -511,6 +566,7 @@ impl TGuiDraw {
                 w: _,
                 h: _,
                 color: _,
+                final_bounds: _,
             } => {
                 if vertical {
                     *y += amount;
@@ -578,6 +634,19 @@ impl TGuiDraw {
             TGuiDraw::BoxedGuiObject { obj } => {
                 obj.shift(amount, vertical);
             }
+            TGuiDraw::Image {
+                x,
+                y,
+                w: _,
+                h: _,
+                path: _,
+            } => {
+                if vertical {
+                    *y += amount;
+                } else {
+                    *x += amount;
+                }
+            }
         }
     }
 }
@@ -601,7 +670,8 @@ pub fn draw_string(
             handle.draw_text_codepoint(
                 &fnt,
                 i as i32,
-                Vector2::new(dx as f32 * sx, dy as f32 * sy),sy,
+                Vector2::new(dx as f32 * sx, dy as f32 * sy),
+                sy,
                 color,
             );
             dx += 1;
@@ -615,16 +685,14 @@ pub fn draw_string(
         }
     }
 }
+
 pub fn draw_rectangle(handle: &mut RaylibDrawHandle, x: i32, y: i32, w: i32, h: i32, color: Color) {
     let sx = scale_x(handle);
     let sy = scale_y(handle);
     let p0 = Vector2::new(x as f32 * sx, y as f32 * sy);
-    let p1 = Vector2::new(x as f32 * sx+ w as f32 * sx, y as f32 * sy);
-    let p2 = Vector2::new(x as f32 * sx, y as f32 * sy+ h as f32 * sy);
-    let p3 = Vector2::new(
-        x as f32 * sx + w as f32 * sx,
-        y as f32 *sy + h as f32 * sy,
-    );
+    let p1 = Vector2::new(x as f32 * sx + w as f32 * sx, y as f32 * sy);
+    let p2 = Vector2::new(x as f32 * sx, y as f32 * sy + h as f32 * sy);
+    let p3 = Vector2::new(x as f32 * sx + w as f32 * sx, y as f32 * sy + h as f32 * sy);
     handle.draw_line_ex(p0, p1, 1.0, color);
     handle.draw_line_ex(p0, p2, 1.0, color);
     handle.draw_line_ex(p3, p1, 1.0, color);
@@ -1000,7 +1068,8 @@ impl TGui {
         self.draw_call_stack.push(div);
     }
 
-    pub fn add_box(&mut self, w: i32, h: i32) {
+    pub fn add_box(&mut self, w: i32, h: i32) -> TGuiOutput<Boundary> {
+        let out = TGuiOutput::new();
         let mut div = self.draw_call_stack.pop().unwrap();
         div.draw_calls.push(TGuiDraw::DrawBox {
             x: self.cursor_x,
@@ -1008,6 +1077,7 @@ impl TGui {
             w,
             h,
             color: div.fg_color,
+            final_bounds: out.clone(),
         });
         if div.vertical {
             if div.upside_down {
@@ -1019,6 +1089,7 @@ impl TGui {
             self.cursor_x += w + div.padding_x;
         }
         self.draw_call_stack.push(div);
+        out
     }
 
     pub fn add_button(&mut self, w: i32, h: i32, text: impl Into<String>) -> TGuiOutput<bool> {

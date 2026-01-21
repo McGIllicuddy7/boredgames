@@ -1,11 +1,18 @@
-use std::{any::Any, collections::{BTreeMap, HashMap, HashSet}, sync::{Arc, Mutex}};
+use std::{
+    any::Any,
+    collections::{BTreeMap, HashMap, HashSet},
+    sync::{Arc, Mutex},
+};
 
 use raylib::{color::Color, prelude::RaylibDrawHandle};
 
-use crate::{state::{Immutable, Throws}, tgui::{GuiObject, TGui, TGuiOutput, get_string_bounds}};
+use crate::{
+    state::{Immutable, Throws},
+    tgui::{GuiObject, TGui, TGuiOutput, get_string_bounds},
+};
 
-use crate::throw;
 use crate::state::Exception;
+use crate::throw;
 #[repr(transparent)]
 #[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Clone, Copy, Hash)]
 
@@ -126,52 +133,55 @@ impl TransGuiElement {
         }
     }
     fn set_parent(&mut self, new_parent: ElementId) {
-        match self {
-            TransGuiElement::String {
-                s: _,
-                color: _,
-                parent,
-            } => {
-                *parent.unsafe_get_mut_please_dont_use() = new_parent;
-            }
-            TransGuiElement::Box {
-                h: _,
-                w: _,
-                color: _,
-                parent,
-            } => {
-                *parent.unsafe_get_mut_please_dont_use() = new_parent;
-            }
-            TransGuiElement::Button {
-                color: _,
-                on_pressed: _,
-                parent,
-                text: _,
-            } => {
-                *parent.unsafe_get_mut_please_dont_use() = new_parent;
-            }
-            TransGuiElement::Container {
-                children: _,
-                horizontal: _,
-                parent,
-                color: _,
-                upside_down: _,
-            } => {
-                *parent.unsafe_get_mut_please_dont_use() = new_parent;
-            }
-            TransGuiElement::ScrollBox {
-                scroll_amount: _,
-                w: _,
-                h: _,
-                children: _,
-                parent,
-                color: _,
-                upside_down: _,
-            } => {
-                *parent.unsafe_get_mut_please_dont_use() = new_parent;
-            }
-            TransGuiElement::BoxedGuiObject { obj: _, parent } => {
-                *parent.unsafe_get_mut_please_dont_use() = new_parent;
+        unsafe {
+            match self {
+                TransGuiElement::String {
+                    s: _,
+                    color: _,
+                    parent,
+                } => {
+                    *parent.get_mut() = new_parent;
+                }
+
+                TransGuiElement::Box {
+                    h: _,
+                    w: _,
+                    color: _,
+                    parent,
+                } => {
+                    *parent.get_mut() = new_parent;
+                }
+                TransGuiElement::Button {
+                    color: _,
+                    on_pressed: _,
+                    parent,
+                    text: _,
+                } => {
+                    *parent.get_mut() = new_parent;
+                }
+                TransGuiElement::Container {
+                    children: _,
+                    horizontal: _,
+                    parent,
+                    color: _,
+                    upside_down: _,
+                } => {
+                    *parent.get_mut() = new_parent;
+                }
+                TransGuiElement::ScrollBox {
+                    scroll_amount: _,
+                    w: _,
+                    h: _,
+                    children: _,
+                    parent,
+                    color: _,
+                    upside_down: _,
+                } => {
+                    *parent.get_mut() = new_parent;
+                }
+                TransGuiElement::BoxedGuiObject { obj: _, parent } => {
+                    *parent.get_mut() = new_parent;
+                }
             }
         }
     }
@@ -347,77 +357,79 @@ impl TransGui {
         self.modifications += 1;
         self.detach_element(id);
         let prs = self.get_element(parent_to).unwrap();
-        match prs {
-            TransGuiElement::Container {
-                children,
-                horizontal: _,
-                parent: _,
-                color: _,
-                upside_down: _,
-            } => {
-                children.unsafe_get_mut_please_dont_use().push(id);
+        unsafe {
+            match prs {
+                TransGuiElement::Container {
+                    children,
+                    horizontal: _,
+                    parent: _,
+                    color: _,
+                    upside_down: _,
+                } => {
+                    children.get_mut().push(id);
+                }
+                TransGuiElement::ScrollBox {
+                    scroll_amount: _,
+                    w: _,
+                    h: _,
+                    children,
+                    parent: _,
+                    color: _,
+                    upside_down: _,
+                } => {
+                    children.get_mut().push(id);
+                }
+                _ => {
+                    todo!()
+                }
             }
-            TransGuiElement::ScrollBox {
-                scroll_amount: _,
-                w: _,
-                h: _,
-                children,
-                parent: _,
-                color: _,
-                upside_down: _,
-            } => {
-                children.unsafe_get_mut_please_dont_use().push(id);
-            }
-            _ => {
-                todo!()
-            }
-        }
-        match self.get_element(id).unwrap() {
-            TransGuiElement::String {
-                s: _,
-                color: _,
-                parent,
-            } => {
-                *parent.unsafe_get_mut_please_dont_use() = parent_to;
-            }
-            TransGuiElement::Box {
-                h: _,
-                w: _,
-                color: _,
-                parent,
-            } => {
-                *parent.unsafe_get_mut_please_dont_use() = parent_to;
-            }
-            TransGuiElement::Button {
-                color: _,
-                on_pressed: _,
-                parent,
-                text: _,
-            } => {
-                *parent.unsafe_get_mut_please_dont_use() = parent_to;
-            }
-            TransGuiElement::Container {
-                children: _,
-                horizontal: _,
-                parent,
-                color: _,
-                upside_down: _,
-            } => {
-                *parent.unsafe_get_mut_please_dont_use() = parent_to;
-            }
-            TransGuiElement::ScrollBox {
-                scroll_amount: _,
-                w: _,
-                h: _,
-                children: _,
-                parent,
-                color: _,
-                upside_down: _,
-            } => {
-                *parent.unsafe_get_mut_please_dont_use() = parent_to;
-            }
-            TransGuiElement::BoxedGuiObject { obj: _, parent } => {
-                *parent.unsafe_get_mut_please_dont_use() = parent_to;
+            match self.get_element(id).unwrap() {
+                TransGuiElement::String {
+                    s: _,
+                    color: _,
+                    parent,
+                } => {
+                    *parent.get_mut() = parent_to;
+                }
+                TransGuiElement::Box {
+                    h: _,
+                    w: _,
+                    color: _,
+                    parent,
+                } => {
+                    *parent.get_mut() = parent_to;
+                }
+                TransGuiElement::Button {
+                    color: _,
+                    on_pressed: _,
+                    parent,
+                    text: _,
+                } => {
+                    *parent.get_mut() = parent_to;
+                }
+                TransGuiElement::Container {
+                    children: _,
+                    horizontal: _,
+                    parent,
+                    color: _,
+                    upside_down: _,
+                } => {
+                    *parent.get_mut() = parent_to;
+                }
+                TransGuiElement::ScrollBox {
+                    scroll_amount: _,
+                    w: _,
+                    h: _,
+                    children: _,
+                    parent,
+                    color: _,
+                    upside_down: _,
+                } => {
+                    *parent.get_mut() = parent_to;
+                }
+                TransGuiElement::BoxedGuiObject { obj: _, parent } => {
+                    *parent.get_mut() = parent_to;
+                }
             }
         }
     }
@@ -434,59 +446,57 @@ impl TransGui {
         element.set_parent(ElementId::new());
         if is_valid {
             let pr = self.get_element(parent).unwrap();
-            match pr {
-                TransGuiElement::Container {
-                    children,
-                    horizontal: _,
-                    parent: _,
-                    color: _,
-                    upside_down: _,
-                } => {
-                    let mut idx = -1;
-                    for i in 0..children.get().len() {
-                        if children.unsafe_get_mut_please_dont_use()[i] == id {
-                            idx = i as i32;
-                            break;
+            unsafe {
+                match pr {
+                    TransGuiElement::Container {
+                        children,
+                        horizontal: _,
+                        parent: _,
+                        color: _,
+                        upside_down: _,
+                    } => {
+                        let mut idx = -1;
+                        for i in 0..children.get().len() {
+                            if children.get_mut()[i] == id {
+                                idx = i as i32;
+                                break;
+                            }
+                        }
+                        if idx == -1 {
+                            todo!()
+                        } else {
+                            let prev_len = children.get().len();
+                            children.get_mut().remove(idx as usize);
+                            assert!(children.get().len() == prev_len - 1);
                         }
                     }
-                    if idx == -1 {
-                        todo!()
-                    } else {
-                        let prev_len = children.get().len();
-                        children
-                            .unsafe_get_mut_please_dont_use()
-                            .remove(idx as usize);
-                        assert!(children.get().len() == prev_len - 1);
-                    }
-                }
-                TransGuiElement::ScrollBox {
-                    scroll_amount: _,
-                    w: _,
-                    h: _,
-                    children,
-                    parent: _,
-                    color: _,
-                    upside_down: _,
-                } => {
-                    let mut idx = -1;
-                    for i in 0..children.get().len() {
-                        if children.unsafe_get_mut_please_dont_use()[i] == id {
-                            idx = i as i32;
-                            break;
+                    TransGuiElement::ScrollBox {
+                        scroll_amount: _,
+                        w: _,
+                        h: _,
+                        children,
+                        parent: _,
+                        color: _,
+                        upside_down: _,
+                    } => {
+                        let mut idx = -1;
+                        for i in 0..children.get().len() {
+                            if children.get_mut()[i] == id {
+                                idx = i as i32;
+                                break;
+                            }
+                        }
+                        if idx == -1 {
+                            todo!()
+                        } else {
+                            let prev_len = children.get().len();
+                            children.get_mut().remove(idx as usize);
+                            assert!(children.get().len() == prev_len - 1);
                         }
                     }
-                    if idx == -1 {
+                    _ => {
                         todo!()
-                    } else {
-                        let prev_len = children.get().len();
-                        children
-                            .unsafe_get_mut_please_dont_use()
-                            .remove(idx as usize);
-                        assert!(children.get().len() == prev_len - 1);
                     }
-                }
-                _ => {
-                    todo!()
                 }
             }
         }
@@ -572,7 +582,7 @@ impl TransGui {
                 scroll_amount: _,
                 w: _,
                 h: _,
-                children:_,
+                children: _,
                 parent: _,
                 color: _,
                 upside_down: _,
@@ -580,7 +590,7 @@ impl TransGui {
                 //               println!("{:#?}", children.get().len());
             }
             TransGuiElement::Container {
-                children:_,
+                children: _,
                 horizontal: _,
                 parent: _,
                 color: _,
