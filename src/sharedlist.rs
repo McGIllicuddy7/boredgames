@@ -49,16 +49,16 @@ impl<T: Clone> SharedList<T> {
         }
     }
     fn begin_write(&self){
-        *self.debug_writer_active.lock().unwrap() = true;
+        //*self.debug_writer_active.lock().unwrap() = true;
     }
     fn end_write(&self){
-        *self.debug_writer_active.lock().unwrap() = false;
+        //*self.debug_writer_active.lock().unwrap() = false;
     }
     fn begin_read(&self){
-        *self.debug_reader_count.lock().unwrap() += 1;
+        //*self.debug_reader_count.lock().unwrap() += 1;
     }
     fn end_read(&self){
-        *self.debug_reader_count.lock().unwrap() -= 1;
+        //*self.debug_reader_count.lock().unwrap() -= 1;
     }
     /*
      *checks if the list has been mutated, if it has been mutated return true, set its mutation flag to false, otherwise return false

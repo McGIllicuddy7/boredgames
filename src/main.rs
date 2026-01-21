@@ -4,6 +4,7 @@ use transir::trans;
 use crate::{sharedlist::{SharedList, SpinRwLock}, transgui::{ElementId, TransGui, TransIr}};
 #[allow(unused)]
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::thread::yield_now;
 pub mod rtils;
 pub mod server;
 pub mod sharedlist;
@@ -51,23 +52,35 @@ pub fn old_main() {
 }
 
 pub fn main() { 
-    let list:SharedList<i32> = SharedList::new();
+    let list:SharedList<u64> = SharedList::new();
     let mut handles = Vec::new();
-    for _ in 0..100{
-        list.push((0) as i32);
+    for i in 0..8*10{
+        list.push((i) as u64);
     }
-    for _ in 0..100{
+    for i in 0..8{
         let listclone= list.clone();
-        handles.push(std::thread::spawn(move ||{
-            let list = listclone;
-            for _ in 0..1000{
-                for i in 0..100{
-                    let mut x = list.write_at(i).unwrap();
-                    *x.get_mut() += 1;
-                }
-            }
 
-        }));
+        handles.push(std::thread::spawn(move ||{
+            std::thread::yield_now(); 
+            let list = listclone;
+            let start = i*10;   
+             println!("started:{}", start);
+            let mut z = list.write_at(start as usize).unwrap();
+            let mut should_eq = *z.get();
+            for x in 0..10{
+                std::thread::yield_now(); 
+                for j in 1..10{
+                        std::thread::yield_now(); 
+                        let get = list.get(start+j).unwrap();
+                        should_eq+= get;
+                        *z.get_mut() += get;
+                    }
+            }
+            println!("should_eq:{:#?}", should_eq);
+            drop(z);
+            println!("done with:{}", start);
+        }
+         ));
     }
     for i in handles{
         i.join().unwrap();
