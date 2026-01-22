@@ -1,5 +1,4 @@
 use std::{
-    any::Any,
     collections::{BTreeMap, HashMap, HashSet},
     sync::{Arc, Mutex},
 };
@@ -7,8 +6,9 @@ use std::{
 use raylib::{color::Color, prelude::RaylibDrawHandle};
 
 use crate::{
+    sharedlist::SharedList,
     state::{Immutable, Throws},
-    tgui::{GuiObject, TGui, TGuiOutput, get_string_bounds},
+    tgui::{Boundary, GuiObject, TGui, TGuiOutput, get_string_bounds},
 };
 
 use crate::state::Exception;
@@ -37,6 +37,11 @@ impl ElementId {
     }
 }
 
+pub trait StateView: 'static {
+    fn mutated(&self, id: ElementId, gui: &TransGui) -> bool;
+    fn update_view(&self, id: ElementId, gui: &mut TransGui);
+}
+
 pub struct TransGui {
     elements: BTreeMap<ElementId, TransGuiElement>,
     roots: Vec<ElementId>,
@@ -46,10 +51,11 @@ pub struct TransGui {
     gui: TGui,
     scrollbar_outputs: HashMap<ElementId, TGuiOutput<i32>>,
     button_outputs: HashMap<ElementId, TGuiOutput<bool>>,
+    box_outputs: HashMap<ElementId, TGuiOutput<Boundary>>,
     mutated: bool,
     modifications: usize,
     hidden: HashSet<ElementId>,
-    list_cache: HashMap<ElementId, Box<dyn Any>>,
+    state_views: HashMap<ElementId, Arc<dyn StateView>>,
 }
 
 #[derive(Clone)]
@@ -207,7 +213,8 @@ impl TransGui {
             button_outputs: HashMap::new(),
             modifications: 0,
             hidden: HashSet::new(),
-            list_cache: HashMap::new(),
+            state_views: HashMap::new(),
+            box_outputs: HashMap::new(),
         }
     }
 
@@ -561,53 +568,6 @@ impl TransGui {
     fn render(&mut self, handle: &mut RaylibDrawHandle) {
         self.gui.draw_frame(handle);
     }
-
-    pub fn recompute_list<T: PartialEq + Clone + 'static>(
-        &mut self,
-        element: ElementId,
-        list: &[T],
-        create_element: impl FnMut(&mut TransGui, &T) -> ElementId,
-    ) {
-        let mut ce = create_element;
-        if let Some(cache) = self.list_cache.remove(&element) {
-            let dc: Box<Vec<T>> = cache.downcast().unwrap();
-            if *dc == list {
-                return;
-            }
-        }
-        self.remove_children(element);
-        let ele = self.get_element(element).unwrap();
-        match ele {
-            TransGuiElement::ScrollBox {
-                scroll_amount: _,
-                w: _,
-                h: _,
-                children: _,
-                parent: _,
-                color: _,
-                upside_down: _,
-            } => {
-                //               println!("{:#?}", children.get().len());
-            }
-            TransGuiElement::Container {
-                children: _,
-                horizontal: _,
-                parent: _,
-                color: _,
-                upside_down: _,
-            } => {
-                //                println!("{:#?}", children.get().len());
-            }
-            _ => {
-                todo!()
-            }
-        }
-        self.list_cache.insert(element, Box::new(list.to_vec()));
-        for i in list {
-            let e = ce(self, i);
-            self.attach_to_element(e, element);
-        }
-    }
     pub fn remove_children(&mut self, elem: ElementId) {
         let e = self.get_element(elem).unwrap();
         match e.clone() {
@@ -660,7 +620,8 @@ impl TransGui {
                 parent: _,
             } => {
                 self.gui.set_fg_color(color);
-                self.gui.add_box(w, h);
+                let b = self.gui.add_box(w, h);
+                self.box_outputs.insert(id, b);
             }
             TransGuiElement::Button {
                 color,
@@ -728,6 +689,12 @@ impl TransGui {
     }
 
     fn recompute(&mut self) {
+        for (id, update) in self.state_views.clone() {
+            if update.as_ref().mutated(id, self) {
+                self.remove_children(id);
+                update.update_view(id, self);
+            }
+        }
         self.button_outputs.clear();
         self.scrollbar_outputs.clear();
         self.gui.begin_frame();
@@ -878,12 +845,36 @@ impl TransGui {
         for i in purge_list {
             self.elements.remove(&i);
             self.hidden.remove(&i);
+            self.state_views.remove(&i);
         }
         self.modifications = 0;
     }
 
     pub fn should_collect(&self) -> bool {
         self.modifications > 20
+    }
+
+    pub fn attach_state_view(&mut self, id: ElementId, view: impl StateView) {
+        let view = Arc::new(view);
+        self.state_views.insert(id, view);
+    }
+
+    pub fn detach_state_view(&mut self, id: ElementId) {
+        if self.state_views.remove(&id).is_some() {
+            self.remove_children(id);
+        }
+    }
+
+    pub fn button_output(&self, id: ElementId) -> Option<bool> {
+        self.button_outputs.get(&id).map(|i| i.take()).flatten()
+    }
+
+    pub fn scrollbar_output(&self, id: ElementId) -> Option<i32> {
+        self.scrollbar_outputs.get(&id).map(|i| i.take()).flatten()
+    }
+
+    pub fn box_output(&self, id: ElementId) -> Option<Boundary> {
+        self.box_outputs.get(&id).map(|i| i.take()).flatten()
     }
 }
 
@@ -1048,5 +1039,30 @@ impl TransIr {
             out.attach_to_doc(elem);
         }
         out
+    }
+}
+
+pub struct ListView<T: Clone + 'static, U: Fn(&SharedList<T>, ElementId, &mut TransGui) + 'static> {
+    inner: SharedList<T>,
+    on_update: U,
+}
+impl<T: Clone + 'static, U: Fn(&SharedList<T>, ElementId, &mut TransGui) + 'static> StateView
+    for ListView<T, U>
+{
+    fn mutated(&self, _id: ElementId, _gui: &TransGui) -> bool {
+        self.inner.consume_mutation()
+    }
+
+    fn update_view(&self, id: ElementId, gui: &mut TransGui) {
+        (self.on_update)(&self.inner, id, gui);
+    }
+}
+
+impl<T: Clone + 'static, U: Fn(&SharedList<T>, ElementId, &mut TransGui) + 'static> ListView<T, U> {
+    pub fn new(list: &SharedList<T>, on_update: U) -> Self {
+        Self {
+            inner: list.clone(),
+            on_update,
+        }
     }
 }

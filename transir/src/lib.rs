@@ -266,7 +266,7 @@ fn parse_item(item: LispLike<TokenTree>) -> String {
                                         break;
                                     }
                                 }
-                                let string = out.flatten()+".to_string()";
+                                let string = out.flatten() + ".to_string()";
                                 let to_call = iter.next().unwrap().flatten();
                                 let color = if hs.contains_key("color") {
                                     hs["color"].clone().unwrap_or("None".to_string())
@@ -300,10 +300,10 @@ fn parse_item(item: LispLike<TokenTree>) -> String {
                                             todo!();
                                         }
                                         let name = iter.next().unwrap();
-                                        hs.insert("name", Some(parse_item(name)+".to_string()"));
+                                        hs.insert("name", Some(parse_item(name) + ".to_string()"));
                                     } else if s == "w" {
                                         let w = iter.next().unwrap();
-                                        hs.insert("h", Some(parse_item(w)));
+                                        hs.insert("w", Some(parse_item(w)));
                                     } else if s == "h" {
                                         let h = iter.next().unwrap();
                                         hs.insert("h", Some(parse_item(h)));
@@ -331,7 +331,9 @@ fn parse_item(item: LispLike<TokenTree>) -> String {
                                 } else {
                                     "10".to_string()
                                 };
-                                format!("TransIr::Box{{h:{h}, w:{w}, color:{color}, name:{name}}}")
+                                format!(
+                                    "TransIr::Box{{h:{h}, w:{w}, color:{color}, name:{name}.into()}}"
+                                )
                             }
                             _ => v.to_string(),
                         }
