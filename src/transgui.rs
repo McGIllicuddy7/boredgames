@@ -8,7 +8,7 @@ use raylib::{color::Color, prelude::RaylibDrawHandle};
 use crate::{
     sharedlist::SharedList,
     state::{Immutable, Throws},
-    tgui::{Boundary, GuiObject, TGui, TGuiOutput, get_string_bounds},
+    tgui::{ComputedBoundary, GuiObject, TGui, TGuiOutput, get_string_bounds},
 };
 
 use crate::state::Exception;
@@ -51,7 +51,7 @@ pub struct TransGui {
     gui: TGui,
     scrollbar_outputs: HashMap<ElementId, TGuiOutput<i32>>,
     button_outputs: HashMap<ElementId, TGuiOutput<bool>>,
-    box_outputs: HashMap<ElementId, TGuiOutput<Boundary>>,
+    box_outputs: HashMap<ElementId, TGuiOutput<ComputedBoundary>>,
     mutated: bool,
     modifications: usize,
     hidden: HashSet<ElementId>,
@@ -866,15 +866,15 @@ impl TransGui {
     }
 
     pub fn button_output(&self, id: ElementId) -> Option<bool> {
-        self.button_outputs.get(&id).map(|i| i.take()).flatten()
+        self.button_outputs.get(&id).and_then(|i| i.take())
     }
 
     pub fn scrollbar_output(&self, id: ElementId) -> Option<i32> {
-        self.scrollbar_outputs.get(&id).map(|i| i.take()).flatten()
+        self.scrollbar_outputs.get(&id).and_then(|i| i.take())
     }
 
-    pub fn box_output(&self, id: ElementId) -> Option<Boundary> {
-        self.box_outputs.get(&id).map(|i| i.take()).flatten()
+    pub fn box_output(&self, id: ElementId) -> Option<ComputedBoundary> {
+        self.box_outputs.get(&id).and_then(|i| i.take())
     }
 }
 
@@ -1066,3 +1066,4 @@ impl<T: Clone + 'static, U: Fn(&SharedList<T>, ElementId, &mut TransGui) + 'stat
         }
     }
 }
+pub type TransOutput<T> = TGuiOutput<T>;

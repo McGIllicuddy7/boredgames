@@ -8,7 +8,7 @@ pub mod rtils_useful {
     use std::io::{Read, Write};
     use std::str::FromStr;
     use std::sync::atomic::AtomicBool;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, RwLock};
     use std::thread::yield_now;
 
     use serde::{Deserialize, Serialize};
@@ -1119,4 +1119,42 @@ pub mod rtils_useful {
         //println!("{:#?}", out);
         out
     }
+    pub struct Shared<T> {
+        inner: Arc<RwLock<T>>,
+    }
+    impl<T> Shared<T> {
+        pub fn new(value: T) -> Self {
+            Self {
+                inner: Arc::new(RwLock::new(value)),
+            }
+        }
+        pub fn shared_store_copy(&self, v: T) {
+            *self.inner.write().unwrap() = v;
+        }
+    }
+    impl<T: Clone> Shared<T> {
+        pub fn shared_get_copy(&self) -> T {
+            self.inner.read().unwrap().clone()
+        }
+    }
+
+    #[macro_export]
+    macro_rules! make_shared_type {
+    ($T:ty, $((fn $name:ident(&mut self$(,)? $($arg:ident:$ty:ty$(,)?)*)->$returns:ty))* , $((fn $const_name:ident(& self$(,)? $($const_arg:ident:$const_ty:ty$(,)?)*)->$const_returns:ty))*)=> {
+        impl Shared<$T>{
+            $(
+                pub fn $name(&self, $($arg:$ty)*)->$returns{
+                    let mut lock = self.inner.write().unwrap();
+                    lock.$name($($arg,)*)
+                }
+            )*
+            $(
+                pub fn $const_name(&self, $($const_arg:$const_ty)*)->$const_returns{
+                    let lock = self.inner.read().unwrap();
+                    lock.$const_name($($const_arg,)*)
+                }
+            )*
+        }
+    };
+}
 }

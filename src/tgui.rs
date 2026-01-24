@@ -75,7 +75,7 @@ pub enum TGuiDraw {
         w: i32,
         h: i32,
         color: Color,
-        final_bounds: TGuiOutput<Boundary>,
+        final_bounds: TGuiOutput<ComputedBoundary>,
     },
     DrawButton {
         x: i32,
@@ -122,12 +122,18 @@ pub enum TGuiDraw {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Boundary {
     pub x: i32,
     pub y: i32,
     pub h: i32,
     pub w: i32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ComputedBoundary {
+    pub gui_coords: Boundary,
+    pub pixel_coords: Boundary,
 }
 
 pub fn get_string_bounds(s: &str, x: i32, y: i32, width: i32) -> Boundary {
@@ -158,7 +164,7 @@ pub fn get_string_bounds(s: &str, x: i32, y: i32, width: i32) -> Boundary {
         x,
         y,
         h: (max_y - y),
-        w: max_x - x,
+        w: max_x - x + 2,
     }
 }
 
@@ -233,8 +239,8 @@ impl TGuiDraw {
                         dw += tdw;
                     }
                 }
-                dw += padding_x * 2;
-                dh += padding_y * 2;
+                dw += padding_x;
+                dh += padding_y;
                 /*if dw < w - padding_x * 2 {
                     dw = w - padding_x * 2;
                 }
@@ -412,11 +418,23 @@ impl TGuiDraw {
                 final_bounds,
             } => {
                 draw_rectangle(draw_handle, *x, *y, *w, *h, *color);
-                final_bounds.send(Boundary {
+                let bbase = Boundary {
                     x: *x,
                     y: *y,
                     h: *h,
                     w: *w,
+                };
+                let sx = scale_x(draw_handle);
+                let sy = scale_y(draw_handle);
+                let b_comp = Boundary {
+                    x: (*x as f32 * sx) as i32,
+                    w: (*w as f32 * sx) as i32,
+                    y: (*y as f32 * sy) as i32,
+                    h: (*h as f32 * sy) as i32,
+                };
+                final_bounds.send(ComputedBoundary {
+                    gui_coords: bbase,
+                    pixel_coords: b_comp,
                 });
             }
             TGuiDraw::DrawButton {
@@ -1068,7 +1086,7 @@ impl TGui {
         self.draw_call_stack.push(div);
     }
 
-    pub fn add_box(&mut self, w: i32, h: i32) -> TGuiOutput<Boundary> {
+    pub fn add_box(&mut self, w: i32, h: i32) -> TGuiOutput<ComputedBoundary> {
         let out = TGuiOutput::new();
         let mut div = self.draw_call_stack.pop().unwrap();
         div.draw_calls.push(TGuiDraw::DrawBox {

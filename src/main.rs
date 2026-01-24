@@ -1,4 +1,4 @@
-use raylib::{color::Color, prelude::RaylibDraw};
+use raylib::{color::Color, math::Vector2, prelude::RaylibDraw};
 use transir::trans;
 
 use crate::{
@@ -13,7 +13,7 @@ pub mod sharedlist;
 pub mod state;
 pub mod tgui;
 pub mod transgui;
-pub fn main() {
+pub fn old_main() {
     let indexes = SharedList::new();
     let indices2 = indexes.clone();
     let indices3 = indexes.clone();
@@ -64,5 +64,18 @@ pub fn main() {
         let mut dr = handle.begin_drawing(&thread);
         dr.clear_background(Color::BLACK);
         gui.update(&mut dr);
+        let bounds = gui.box_output(box_id).unwrap().pixel_coords;
+        let center = Vector2::new(
+            (bounds.x + bounds.w / 2) as f32,
+            (bounds.y + bounds.h / 2) as f32,
+        );
+        let rad = if bounds.w < bounds.h {
+            bounds.w as f32 / 2.
+        } else {
+            bounds.h as f32 / 2.
+        };
+        dr.draw_circle(center.x as i32, center.y as i32, rad, Color::BLUEVIOLET);
     }
 }
+
+pub fn main() {}
