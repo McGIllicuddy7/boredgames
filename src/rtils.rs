@@ -9,6 +9,7 @@ pub mod rtils_useful {
     use std::str::FromStr;
     use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, Mutex, RwLock};
+    use std::task::Poll;
     use std::thread::yield_now;
 
     use serde::{Deserialize, Serialize};
@@ -243,7 +244,7 @@ pub mod rtils_useful {
     #[macro_export]
     macro_rules! new_exception {
         ($exp:expr) => {
-            return Exception {
+            Exception {
                 trace: ::std::backtrace::Backtrace::force_capture(),
                 error: Box::from($exp),
                 file: file!(),
@@ -255,7 +256,7 @@ pub mod rtils_useful {
     #[macro_export]
     macro_rules! new_exception {
         ($exp:expr) => {
-            return Exception {
+            Exception {
                 trace: ::std::backtrace::Backtrace::capture(),
                 error: Box::from($exp),
                 file: file!(),
@@ -922,6 +923,42 @@ pub mod rtils_useful {
         Ok(buf)
     }
 
+    pub fn stream_read_bytes_async<'a>(
+        stream: &'a mut std::net::TcpStream,
+    ) -> impl Future<Output = Throws<Vec<u8>>> {
+        struct Waiting<'a> {
+            stream: &'a mut std::net::TcpStream,
+        }
+        impl<'a> Future for Waiting<'a> {
+            type Output = Throws<Vec<u8>>;
+            fn poll(
+                mut self: std::pin::Pin<&mut Self>,
+                _cx: &mut std::task::Context<'_>,
+            ) -> Poll<Self::Output> {
+                self.stream.set_nonblocking(true)?;
+                let mut bytes = [0; 8];
+                let e = self.stream.read_exact(&mut bytes);
+                if let Err(e) = e {
+                    match e.kind() {
+                        std::io::ErrorKind::WouldBlock => return Poll::Pending,
+                        _ => Poll::Ready(Err(new_exception!(e))),
+                    }
+                } else {
+                    self.stream.set_nonblocking(false).unwrap();
+                    let len = u64::from_le_bytes(bytes);
+                    let mut buf = Vec::new();
+                    for _ in 0..len {
+                        buf.push(0_u8);
+                    }
+                    let _ = self.stream.read_exact(&mut buf);
+                    self.stream.set_nonblocking(true)?;
+                    Poll::Ready(Ok(buf))
+                }
+            }
+        }
+        Waiting { stream: stream }
+    }
+
     #[repr(transparent)]
     #[derive(Clone, Debug, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
     pub struct Immutable<T> {
@@ -1119,6 +1156,7 @@ pub mod rtils_useful {
         //println!("{:#?}", out);
         out
     }
+
     pub struct Shared<T> {
         inner: Arc<RwLock<T>>,
     }

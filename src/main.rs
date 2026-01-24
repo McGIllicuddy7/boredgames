@@ -7,6 +7,7 @@ use crate::{
 };
 #[allow(unused)]
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+pub mod marathon;
 pub mod rtils;
 pub mod server;
 pub mod sharedlist;
