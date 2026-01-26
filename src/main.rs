@@ -7,11 +7,10 @@ use crate::{
 };
 #[allow(unused)]
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+pub mod arena;
 pub mod marathon;
 pub mod rtils;
-pub mod server;
 pub mod sharedlist;
-pub mod state;
 pub mod tgui;
 pub mod transgui;
 pub fn old_main() {
@@ -79,4 +78,8 @@ pub fn old_main() {
     }
 }
 
-pub fn main() {}
+pub fn main() {
+    let are = arena::Arena::new();
+    let x = are.alloc(10);
+    println!("x:{x}");
+}

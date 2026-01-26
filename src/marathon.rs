@@ -1,17 +1,13 @@
-use crate::{
-    rtils::rtils_useful::{BPipe, stream_write_bytes},
-    state::{
-        Exception, Throws, stream_read_bytes_async, stream_read_bytes_blocking,
-        stream_try_read_bytes,
-    },
+use crate::rtils::rtils_useful::{
+    BPipe, Exception, Throws, stream_read_bytes_async, stream_read_bytes_blocking,
+    stream_try_read_bytes, stream_write_bytes,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
-    net::{SocketAddr, TcpListener, TcpStream},
+    net::TcpStream,
     sync::{Arc, Mutex},
     thread::yield_now,
-    u64,
 };
 pub enum BStream<T: Serialize + DeserializeOwned> {
     Stream { stream: Arc<Mutex<TcpStream>> },
@@ -50,8 +46,8 @@ impl<T: Serialize + DeserializeOwned> BStream<T> {
                     return Ok(None);
                 };
                 let x = rmp_serde::decode::from_slice::<T>(&bytes)?;
-                let tmp = Ok(Some(x));
-                tmp
+
+                Ok(Some(x))
             }
             BStream::Pipe { pipe } => pipe.recieve(),
         }
@@ -69,6 +65,7 @@ impl<T: Serialize + DeserializeOwned> BStream<T> {
         }
     }
 
+    #[allow(clippy::await_holding_lock)]
     pub async fn receive_async(&self) -> Throws<T> {
         match self {
             BStream::Stream { stream } => {
@@ -93,12 +90,11 @@ impl<T: Serialize + DeserializeOwned> Iterator for BStream<T> {
     }
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-#[repr(transparent)]
-
 /*
     Thing you may want to respond to
 */
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+#[repr(transparent)]
 pub struct RequestId {
     inner: u64,
 }
@@ -372,12 +368,10 @@ impl<T: Send + Serialize + DeserializeOwned> Arachne<T> {
                 let rs = self.slf.try_wait_for_response(self.req);
                 match rs {
                     Ok(x) => match x {
-                        Some(out) => return std::task::Poll::Ready(Ok(out)),
-                        None => {
-                            return std::task::Poll::Pending;
-                        }
+                        Some(out) => std::task::Poll::Ready(Ok(out)),
+                        None => std::task::Poll::Pending,
                     },
-                    Err(e) => return std::task::Poll::Ready(Err(e)),
+                    Err(e) => std::task::Poll::Ready(Err(e)),
                 }
             }
         }
@@ -412,8 +406,8 @@ pub fn map_store<T: ArachneId, U>(map: &mut BTreeMap<T, U>, value: U) -> T {
     let mut id;
     for i in 4096..u64::MAX {
         id = T::create(i);
-        if !map.contains_key(&id) {
-            map.insert(id, value);
+        if let std::collections::btree_map::Entry::Vacant(e) = map.entry(id) {
+            e.insert(value);
             return id;
         }
     }
@@ -423,8 +417,8 @@ pub fn map_store_high_priority<T: ArachneId, U>(map: &mut BTreeMap<T, U>, value:
     let mut id;
     for i in 1..u64::MAX {
         id = T::create(i);
-        if !map.contains_key(&id) {
-            map.insert(id, value);
+        if let std::collections::btree_map::Entry::Vacant(e) = map.entry(id) {
+            e.insert(value);
             return id;
         }
     }
@@ -436,7 +430,7 @@ pub fn map_remove<T: ArachneId, U>(map: &mut BTreeMap<T, U>, id: T) -> Option<U>
 }
 
 pub fn map_copy<T: ArachneId, U: Clone>(map: &BTreeMap<T, U>, id: T) -> Option<U> {
-    map.get(&id).map(|i| i.clone())
+    map.get(&id).cloned()
 }
 
 pub fn map_get<T: ArachneId, U>(map: &BTreeMap<T, U>, id: T) -> Option<&U> {

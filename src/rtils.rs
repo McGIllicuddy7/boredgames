@@ -869,8 +869,8 @@ pub mod rtils_useful {
 
     pub fn stream_write_bytes(stream: &mut std::net::TcpStream, bytes: &[u8]) -> Throws<()> {
         let blen = (bytes.len() as u64).to_le_bytes();
-        stream.write(&blen)?;
-        stream.write(bytes)?;
+        let _ = stream.write(&blen)?;
+        let _ = stream.write(bytes)?;
         Ok(())
     }
 
@@ -890,9 +890,8 @@ pub mod rtils_useful {
         }
         let len = u64::from_le_bytes(bytes);
         let mut buf = Vec::new();
-        for _ in 0..len {
-            buf.push(0_u8);
-        }
+        buf.reserve_exact(len as usize);
+        buf.extend(std::iter::repeat_n(0, len as usize));
         stream.set_nonblocking(false)?;
         let e = stream.read_exact(&mut buf);
         stream.set_nonblocking(true)?;
@@ -912,9 +911,8 @@ pub mod rtils_useful {
         }
         let len = u64::from_le_bytes(bytes);
         let mut buf = Vec::new();
-        for _ in 0..len {
-            buf.push(0_u8);
-        }
+        buf.reserve_exact(len as usize);
+        buf.extend(std::iter::repeat_n(0, len as usize));
         let e = stream.read_exact(&mut buf);
         stream.set_nonblocking(true)?;
         if let Err(e) = e {
@@ -923,8 +921,8 @@ pub mod rtils_useful {
         Ok(buf)
     }
 
-    pub fn stream_read_bytes_async<'a>(
-        stream: &'a mut std::net::TcpStream,
+    pub fn stream_read_bytes_async(
+        stream: &mut std::net::TcpStream,
     ) -> impl Future<Output = Throws<Vec<u8>>> {
         struct Waiting<'a> {
             stream: &'a mut std::net::TcpStream,
@@ -940,23 +938,22 @@ pub mod rtils_useful {
                 let e = self.stream.read_exact(&mut bytes);
                 if let Err(e) = e {
                     match e.kind() {
-                        std::io::ErrorKind::WouldBlock => return Poll::Pending,
+                        std::io::ErrorKind::WouldBlock => Poll::Pending,
                         _ => Poll::Ready(Err(new_exception!(e))),
                     }
                 } else {
                     self.stream.set_nonblocking(false).unwrap();
                     let len = u64::from_le_bytes(bytes);
                     let mut buf = Vec::new();
-                    for _ in 0..len {
-                        buf.push(0_u8);
-                    }
+                    buf.reserve_exact(len as usize);
+                    buf.extend(std::iter::repeat_n(0, len as usize));
                     let _ = self.stream.read_exact(&mut buf);
                     self.stream.set_nonblocking(true)?;
                     Poll::Ready(Ok(buf))
                 }
             }
         }
-        Waiting { stream: stream }
+        Waiting { stream }
     }
 
     #[repr(transparent)]
@@ -971,6 +968,11 @@ pub mod rtils_useful {
         pub fn get(&self) -> &T {
             &self.x
         }
+
+        /// # Safety
+        ///
+        /// Must ensure that whatever invariants of the type holding this and the world at large are upheld, this is a public function but it should only be used in private functions of other types.
+        ///
         pub unsafe fn get_mut(&mut self) -> &mut T {
             &mut self.x
         }

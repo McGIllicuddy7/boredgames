@@ -537,12 +537,7 @@ impl TGuiDraw {
                         dact *= -1;
                     }
                     let mut out = *current_scroll_amount - dact;
-                    if out > 1000 {
-                        out = 1000;
-                    }
-                    if out < 0 {
-                        out = 0;
-                    }
+                    out = out.clamp(0, 1000);
                     scroll_amount.send(out);
                 } else {
                     scroll_amount.send(*current_scroll_amount);

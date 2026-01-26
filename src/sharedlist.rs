@@ -72,6 +72,9 @@ impl<T: Clone> SharedList<T> {
         list.list.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     pub fn consume_mutation(&self) -> bool {
         self.handle_locks();
         let mut list = self.list.write().unwrap();

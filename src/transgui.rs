@@ -6,12 +6,11 @@ use std::{
 use raylib::{color::Color, prelude::RaylibDrawHandle};
 
 use crate::{
+    rtils::rtils_useful::{Exception, Immutable, Throws},
     sharedlist::SharedList,
-    state::{Immutable, Throws},
     tgui::{ComputedBoundary, GuiObject, TGui, TGuiOutput, get_string_bounds},
 };
 
-use crate::state::Exception;
 use crate::throw;
 #[repr(transparent)]
 #[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Clone, Copy, Hash)]
@@ -58,6 +57,7 @@ pub struct TransGui {
     state_views: HashMap<ElementId, Arc<dyn StateView>>,
 }
 
+pub type GuiUpdateFn = dyn FnMut(&mut TransGui, ElementId) + 'static;
 #[derive(Clone)]
 pub enum TransGuiElement {
     String {
@@ -73,7 +73,7 @@ pub enum TransGuiElement {
     },
     Button {
         color: Color,
-        on_pressed: Arc<Mutex<dyn FnMut(&mut TransGui, ElementId)>>,
+        on_pressed: Arc<Mutex<GuiUpdateFn>>,
         parent: Immutable<ElementId>,
         text: String,
     },
@@ -894,7 +894,7 @@ pub enum TransIr {
     },
     Button {
         color: Option<Color>,
-        on_pressed: Arc<Mutex<dyn FnMut(&mut TransGui, ElementId) + 'static>>,
+        on_pressed: Arc<Mutex<GuiUpdateFn>>,
         text: String,
         name: Option<String>,
     },
