@@ -8,9 +8,10 @@ use crate::{
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
-    net::TcpStream,
+    net::{SocketAddr, TcpListener, TcpStream},
     sync::{Arc, Mutex},
     thread::yield_now,
+    u64,
 };
 pub enum BStream<T: Serialize + DeserializeOwned> {
     Stream { stream: Arc<Mutex<TcpStream>> },
@@ -19,6 +20,7 @@ pub enum BStream<T: Serialize + DeserializeOwned> {
 
 impl<T: Serialize + DeserializeOwned> BStream<T> {
     pub fn from_stream(stream: TcpStream) -> Self {
+        stream.set_nonblocking(true).unwrap();
         Self::Stream {
             stream: Arc::new(Mutex::new(stream)),
         }
@@ -100,20 +102,15 @@ impl<T: Serialize + DeserializeOwned> Iterator for BStream<T> {
 pub struct RequestId {
     inner: u64,
 }
-impl RequestId {
-    pub fn invalid() -> Self {
-        Self { inner: 0 }
+impl ArachneId for RequestId {
+    fn create(x: u64) -> Self {
+        Self { inner: x }
     }
 
-    pub fn is_valid(&self) -> bool {
-        self.inner != 0
-    }
-
-    pub fn get(&self) -> u64 {
+    fn get(&self) -> u64 {
         self.inner
     }
 }
-
 /*
     How you get a response from something.
 */
@@ -122,16 +119,12 @@ impl RequestId {
 pub struct ResponseId {
     inner: u64,
 }
-impl ResponseId {
-    pub fn invalid() -> Self {
-        Self { inner: 0 }
+impl ArachneId for ResponseId {
+    fn create(x: u64) -> Self {
+        Self { inner: x }
     }
 
-    pub fn is_valid(&self) -> bool {
-        self.inner != 0
-    }
-
-    pub fn get(&self) -> u64 {
+    fn get(&self) -> u64 {
         self.inner
     }
 }
@@ -400,6 +393,416 @@ impl<T: Send + Serialize + DeserializeOwned> Arachne<T> {
                 slf: self,
                 err: Some(e),
             },
+        }
+    }
+}
+
+pub trait ArachneId: PartialOrd + PartialEq + Ord + Eq + Copy {
+    fn create(x: u64) -> Self;
+    fn get(&self) -> u64;
+    fn is_valid(&self) -> bool {
+        self.get() != 0
+    }
+    fn invalid() -> Self {
+        Self::create(0)
+    }
+}
+
+pub fn map_store<T: ArachneId, U>(map: &mut BTreeMap<T, U>, value: U) -> T {
+    let mut id;
+    for i in 4096..u64::MAX {
+        id = T::create(i);
+        if !map.contains_key(&id) {
+            map.insert(id, value);
+            return id;
+        }
+    }
+    panic!("too many keys");
+}
+pub fn map_store_high_priority<T: ArachneId, U>(map: &mut BTreeMap<T, U>, value: U) -> T {
+    let mut id;
+    for i in 1..u64::MAX {
+        id = T::create(i);
+        if !map.contains_key(&id) {
+            map.insert(id, value);
+            return id;
+        }
+    }
+    panic!("too many keys");
+}
+
+pub fn map_remove<T: ArachneId, U>(map: &mut BTreeMap<T, U>, id: T) -> Option<U> {
+    map.remove(&id)
+}
+
+pub fn map_copy<T: ArachneId, U: Clone>(map: &BTreeMap<T, U>, id: T) -> Option<U> {
+    map.get(&id).map(|i| i.clone())
+}
+
+pub fn map_get<T: ArachneId, U>(map: &BTreeMap<T, U>, id: T) -> Option<&U> {
+    map.get(&id)
+}
+
+pub fn map_get_mut<T: ArachneId, U>(map: &mut BTreeMap<T, U>, id: T) -> Option<&mut U> {
+    map.get_mut(&id)
+}
+
+#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct PID {
+    idx: u64,
+}
+impl ArachneId for PID {
+    fn create(x: u64) -> Self {
+        Self { idx: x }
+    }
+
+    fn get(&self) -> u64 {
+        self.idx
+    }
+}
+
+pub type SpawnProcess<T> = Box<dyn FnOnce(BPipe<LocalCmd<T>>, Option<Arachne<T>>) + Send>;
+pub type SpawnProcessAsync<T> = Box<
+    dyn FnOnce(BPipe<LocalCmd<T>>, Option<Arachne<T>>) -> Box<dyn Future<Output = ()> + Send>
+        + Send,
+>;
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ProcessInfo {
+    pub tags: Arc<[String]>,
+    pub addr: SocketAddr,
+    pub pid: PID,
+}
+pub enum LocalCmd<T: Send + Serialize + DeserializeOwned> {
+    Killed,
+    NewConnection(PID, Arachne<T>),
+    ProcessMap(BTreeMap<PID, ProcessInfo>),
+    RequestMap,
+    RequestConnection(PID),
+    CreateNewProcess(ProcessInfo, Arachne<T>, SpawnProcess<T>),
+    CreateNewProcessAsync(ProcessInfo, Arachne<T>, SpawnProcessAsync<T>),
+}
+
+pub struct Process<T: Send + Serialize + DeserializeOwned> {
+    pub info: ProcessInfo,
+    pub connection: BPipe<LocalCmd<T>>,
+    pub external_connections: BTreeMap<PID, Arachne<T>>,
+}
+#[derive(Serialize, Deserialize, Clone)]
+pub enum Command<T: Send + Clone> {
+    EstablishConnection {
+        to: PID,
+        from: PID,
+    },
+    CloseConnection {
+        to: PID,
+        from: PID,
+    },
+    AddressDying,
+    ServerDying,
+    Letter {
+        to: PID,
+        from: PID,
+        contents: Message<T>,
+    },
+    NewProcess(ProcessInfo),
+    ProcessDied(PID),
+    AllProcesses(BTreeMap<PID, ProcessInfo>),
+    RequestAllProcessees,
+    GetProcessId(ProcessInfo),
+    ReturnProcessId(PID),
+}
+
+pub struct CentralCommittee<T: Send + Serialize + DeserializeOwned + Clone> {
+    pub connections: BTreeMap<SocketAddr, Arachne<Command<T>>>,
+    pub processes: BTreeMap<PID, ProcessInfo>,
+    pub listener: TcpListener,
+    pub should_die: bool,
+}
+
+pub struct LocalCommittee<T: Send + Serialize + DeserializeOwned + Clone> {
+    pub local_processes: BTreeMap<PID, Process<T>>,
+    pub connection: Arachne<Command<T>>,
+    pub listener: TcpListener,
+    pub should_die: bool,
+}
+
+impl<T: Send + Serialize + DeserializeOwned + Clone> CentralCommittee<T> {
+    pub fn run(&mut self) {
+        while !self.should_die {
+            self.update();
+        }
+    }
+
+    pub fn update(&mut self) {
+        self.run_listener();
+        self.handle();
+    }
+
+    pub fn run_listener(&mut self) {
+        while let Ok((stream, addr)) = self.listener.accept() {
+            let con = Arachne::from_stream(stream);
+            self.connections.insert(addr, con);
+        }
+    }
+
+    pub fn handle(&mut self) {
+        let mut to_forward_to_all = Vec::new();
+        let mut to_forward = Vec::new();
+        for (_, cons) in &mut self.connections {
+            while let Ok(Some(msg)) = cons.recieve() {
+                match &msg {
+                    Command::EstablishConnection { to, from: _ } => to_forward.push((*to, msg)),
+                    Command::CloseConnection { to, from: _ } => {
+                        to_forward.push((*to, msg));
+                    }
+                    Command::AddressDying => {
+                        to_forward_to_all.push(msg);
+                    }
+                    Command::ServerDying => {
+                        to_forward_to_all.push(msg);
+                        self.should_die = true;
+                    }
+                    Command::Letter {
+                        to,
+                        from: _,
+                        contents: _,
+                    } => {
+                        to_forward.push((*to, msg));
+                    }
+                    Command::NewProcess(info) => {
+                        self.processes.insert(info.pid, info.clone());
+                    }
+                    Command::ProcessDied(id) => {
+                        self.processes.remove(id);
+                        to_forward_to_all.push(msg);
+                    }
+                    Command::AllProcesses(_) => {}
+                    Command::GetProcessId(_) => {}
+                    Command::RequestAllProcessees => {}
+                    Command::ReturnProcessId(_) => {}
+                }
+            }
+            while let Ok(Some((id, msg))) = cons.recieve_request() {
+                let old_id = id;
+                match msg {
+                    Command::GetProcessId(info) => {
+                        let id = map_store(&mut self.processes, info);
+                        map_get_mut(&mut self.processes, id).unwrap().pid = id;
+                        cons.send_response(old_id, Command::ReturnProcessId(id))
+                            .unwrap();
+                    }
+                    Command::RequestAllProcessees => {
+                        let out = Command::AllProcesses(self.processes.clone());
+                        cons.send_response(old_id, out).unwrap();
+                    }
+                    _ => {
+                        continue;
+                    }
+                }
+            }
+        }
+        for (pid, cmd) in to_forward {
+            let info = self.processes[&pid].clone();
+            let sockd = info.addr;
+            let pipe = &self.connections[&sockd];
+            pipe.send(cmd).unwrap();
+        }
+        for i in to_forward_to_all {
+            for (_, c) in &self.connections {
+                c.send(i.clone()).unwrap();
+            }
+        }
+    }
+}
+
+impl<T: Send + Serialize + DeserializeOwned + Clone + 'static> LocalCommittee<T> {
+    pub fn update(&mut self) {
+        while !self.should_die {
+            self.handle();
+        }
+    }
+    pub fn handle(&mut self) {
+        for (pid, proc) in &mut self.local_processes {
+            for (opid, con) in &mut proc.external_connections {
+                while let Ok(Some(msg)) = con.recieve() {
+                    self.connection
+                        .send(Command::Letter {
+                            to: *opid,
+                            from: *pid,
+                            contents: Message {
+                                is_response: false,
+                                id: 0,
+                                payload: msg,
+                            },
+                        })
+                        .unwrap();
+                }
+                while let Ok(Some((id, msg))) = con.recieve_request() {
+                    self.connection
+                        .send(Command::Letter {
+                            to: *opid,
+                            from: *pid,
+                            contents: Message {
+                                is_response: false,
+                                id: id.get(),
+                                payload: msg,
+                            },
+                        })
+                        .unwrap();
+                }
+                while let Ok(Some((id, msg))) = con.recieve_response() {
+                    self.connection
+                        .send(Command::Letter {
+                            to: *opid,
+                            from: *pid,
+                            contents: Message {
+                                is_response: true,
+                                id: id.get(),
+                                payload: msg,
+                            },
+                        })
+                        .unwrap();
+                }
+            }
+        }
+        while let Ok(Some(msg)) = self.connection.recieve() {
+            match msg {
+                Command::Letter { to, from, contents } => {
+                    self.local_processes[&to].external_connections[&from]
+                        .messages
+                        .send(contents)
+                        .unwrap();
+                }
+                Command::EstablishConnection { to, from } => {
+                    let (con1, con2) = Arachne::new();
+                    self.local_processes
+                        .get_mut(&to)
+                        .unwrap()
+                        .external_connections
+                        .insert(from, con2);
+                    self.local_processes
+                        .get_mut(&to)
+                        .unwrap()
+                        .connection
+                        .send(LocalCmd::NewConnection(from, con1))
+                        .unwrap();
+                }
+                Command::CloseConnection { to, from } => {
+                    self.local_processes
+                        .get_mut(&to)
+                        .unwrap()
+                        .external_connections
+                        .remove(&from)
+                        .unwrap();
+                }
+                Command::ServerDying => {
+                    self.should_die = true;
+                }
+                Command::NewProcess(_) => {}
+                Command::ProcessDied(pid) => {
+                    for (_, p) in &mut self.local_processes {
+                        p.external_connections.remove(&pid);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut to_remove = Vec::new();
+        let mut to_create = Vec::new();
+        for (id, proc) in &mut self.local_processes {
+            while let Ok(Some(rec)) = proc.connection.recieve() {
+                match rec {
+                    LocalCmd::Killed => {
+                        to_remove.push(*id);
+                    }
+                    LocalCmd::NewConnection(pid, arachne) => {
+                        proc.external_connections.insert(pid, arachne);
+                    }
+                    LocalCmd::ProcessMap(_btree_map) => {}
+                    LocalCmd::RequestMap => {
+                        let map = self
+                            .connection
+                            .send_request_wait(Command::RequestAllProcessees)
+                            .unwrap();
+                        match map {
+                            Command::AllProcesses(map) => {
+                                proc.connection.send(LocalCmd::ProcessMap(map)).unwrap();
+                            }
+                            _ => {}
+                        }
+                    }
+                    LocalCmd::RequestConnection(pid) => {
+                        let (p1, p2) = Arachne::new();
+                        proc.external_connections.insert(pid, p1);
+                        proc.connection
+                            .send(LocalCmd::NewConnection(pid, p2))
+                            .unwrap();
+                        self.connection
+                            .send(Command::EstablishConnection {
+                                to: pid,
+                                from: proc.info.pid,
+                            })
+                            .unwrap();
+                    }
+                    LocalCmd::CreateNewProcess(info, parent, to_call) => {
+                        let mut ifx = info.clone();
+                        let id = self
+                            .connection
+                            .send_request_wait(Command::GetProcessId(info))
+                            .unwrap();
+                        match id {
+                            Command::ReturnProcessId(id) => {
+                                let (p1, p2) = BPipe::create();
+                                ifx.pid = id;
+                                let proc: Process<T> = Process {
+                                    info: ifx,
+                                    connection: p1,
+                                    external_connections: BTreeMap::new(),
+                                };
+                                std::thread::spawn(move || {
+                                    to_call(p2, Some(parent));
+                                });
+                                to_create.push(proc);
+                            }
+                            _ => {
+                                todo!()
+                            }
+                        }
+                    }
+                    LocalCmd::CreateNewProcessAsync(info, pipe, func) => {
+                        let mut ifx = info.clone();
+                        let id = self
+                            .connection
+                            .send_request_wait(Command::GetProcessId(info))
+                            .unwrap();
+                        match id {
+                            Command::ReturnProcessId(id) => {
+                                let (p1, p2) = BPipe::create();
+                                ifx.pid = id;
+                                let proc: Process<T> = Process {
+                                    info: ifx,
+                                    connection: p1,
+                                    external_connections: BTreeMap::new(),
+                                };
+                                tokio::spawn(async move { func(p2, Some(pipe)) });
+                                to_create.push(proc);
+                            }
+                            _ => {
+                                todo!()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for i in to_create {
+            self.local_processes.insert(i.info.pid, i);
+        }
+        for i in to_remove {
+            self.local_processes
+                .remove(&i)
+                .map(|i| i.connection.send(LocalCmd::Killed));
         }
     }
 }
