@@ -2,7 +2,7 @@ use raylib::{color::Color, math::Vector2, prelude::RaylibDraw};
 use transir::trans;
 
 use crate::{
-    arena::Map,
+    arena::{BString, Map, dyn_sprintf},
     sharedlist::SharedList,
     transgui::{ElementId, ListView, TransGui, TransIr},
 };
@@ -81,18 +81,6 @@ pub fn old_main() {
 
 pub fn main() {
     let are = arena::Arena::new();
-    let mut table = Map::with_capacity(&are, 4);
-    table.insert("10", 1);
-    table.insert("1", 2);
-    table.insert("32", 3);
-    table.insert("48", 4);
-    table.insert("50", 5);
-    println!("{:#?}", table);
-    let v = table.remove(&"1");
-    println!("{:#?}", v);
-    let v2 = table.remove(&"1");
-    println!("{:#?}", v2);
-    let v3 = table.remove(&"10");
-    println!("{:#?}", v3);
-    println!("{:#?}", table);
+    let x = sprintf!(&are, "hello world:%d", "testing");
+    println!("{}", x);
 }

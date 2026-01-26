@@ -1,6 +1,6 @@
 use std::{
     cell::{Cell, UnsafeCell},
-    fmt::Debug,
+    fmt::{Debug, Display, Formatter, Write},
     hash::{DefaultHasher, Hash, Hasher},
     mem::MaybeUninit,
     ops::{Deref, DerefMut, Index, IndexMut},
@@ -12,6 +12,8 @@ use std::{
         },
     },
 };
+
+use crate::marathon::BStream;
 
 pub trait Trivial {
     const IS_TRIVIAL: bool = const {
@@ -85,6 +87,8 @@ pub struct SpinLock<T> {
     cell: UnsafeCell<T>,
     lock: AtomicBool,
 }
+impl<T: Trivial> Trivial for SpinLock<T> {}
+
 impl<T> SpinLock<T> {
     pub fn new(value: T) -> Self {
         Self {
@@ -141,12 +145,12 @@ impl<T> SpinLock<T> {
         }
     }
 
-    pub fn set(&self, value: T) {
+    pub fn store(&self, value: T) {
         let mut lock = self.lock();
         *lock = value;
     }
 
-    pub fn try_set(&self, value: T) -> Option<T> {
+    pub fn try_store(&self, value: T) -> Option<T> {
         if let Some(mut lock) = self.try_lock() {
             *lock = value;
             None
@@ -802,3 +806,171 @@ impl<'a, T: TrivialClone + Hash + Eq + Debug, U: TrivialClone + Debug> Map<'a, T
         return hits / bins;
     }
 }
+
+pub struct BString<'a> {
+    buf: &'a mut [u8],
+    len: usize,
+    arena: &'a Arena,
+}
+impl<'a> Trivial for BString<'a> {}
+
+impl<'a> BString<'a> {
+    pub fn new(arena: &'a Arena) -> Self {
+        Self {
+            buf: arena.alloc_bytes(16, 1),
+            len: 0,
+            arena: arena,
+        }
+    }
+
+    pub fn push(&mut self, ch: char) {
+        let sz = ch.len_utf8();
+        if self.len + sz < self.buf.len() {
+            ch.encode_utf8(&mut self.buf[self.len..self.len + sz]);
+        } else {
+            let buf2 = self.arena.alloc_bytes(self.buf.len() * 2, 1);
+            for i in 0..self.len {
+                buf2[i] = self.buf[i];
+            }
+            self.buf = buf2;
+            ch.encode_utf8(&mut self.buf[self.len..self.len + sz]);
+        }
+        self.len += sz;
+    }
+
+    pub fn get_str(&self) -> &str {
+        let bytes = &self.buf[0..self.len];
+        std::str::from_utf8(bytes).unwrap()
+    }
+
+    pub fn concat(&mut self, v: &str) {
+        for i in v.chars() {
+            self.push(i);
+        }
+    }
+
+    pub fn concat_writeable<T: Display>(&mut self, v: &T) {
+        write!(self, "{}", v).unwrap();
+    }
+
+    pub fn concat_debug<T: Debug>(&mut self, v: &T) {
+        write!(self, "{:#?}", v).unwrap();
+    }
+
+    pub fn take(self) -> &'a str {
+        std::str::from_utf8(&self.buf[0..self.buf.len()]).unwrap()
+    }
+}
+
+impl<'a> AsRef<str> for BString<'a> {
+    fn as_ref(&self) -> &str {
+        self.get_str()
+    }
+}
+
+impl<'a> Display for BString<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.get_str())
+    }
+}
+impl<'a> Debug for BString<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.get_str())
+    }
+}
+
+impl<'a> std::fmt::Write for BString<'a> {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        for i in s.chars() {
+            self.push(i);
+        }
+        std::fmt::Result::Ok(())
+    }
+}
+
+impl<'a> Hash for BString<'a> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let s = self.as_ref();
+        s.hash(state);
+    }
+}
+
+pub fn dyn_sprintf<'a>(arena: &'a Arena, format: &str, args: &[&dyn Display]) -> BString<'a> {
+    let mut out = BString::new(arena);
+    let mut it = format.chars();
+    let mut index = 0;
+    loop {
+        let Some(c) = it.next() else {
+            break;
+        };
+        if c == '%' {
+            let Some(c1) = it.next() else {
+                break;
+            };
+            if c1 == '%' {
+                out.push('%');
+            } else if c1 == 'd' {
+                out.concat_writeable(&args[index]);
+                index += 1;
+            } else if c1 == 'f' {
+                out.concat_writeable(&args[index]);
+                index += 1;
+            } else if c1 == 's' {
+                out.concat_writeable(&args[index]);
+                index += 1;
+            } else if c1 == 'u' {
+                out.concat_writeable(&args[index]);
+                index += 1;
+            } else if c1 == '*' {
+                out.concat_writeable(&args[index]);
+                index += 1;
+            } else {
+                todo!()
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+#[macro_export]
+macro_rules! sprintf {
+    ($arena:expr, $fmt:literal) => {
+        dyn_sprintf($arena, $fmt, &[])
+    };
+    ($arena:expr,$fmt:literal, $($args:expr),+) => {
+        dyn_sprintf($arena, $fmt,(&[$(&$args), +]))
+    };
+}
+
+pub struct Shared<'a, T: TrivialClone> {
+    ptr: &'a SpinLock<T>,
+}
+impl<'a, T: TrivialClone> Clone for Shared<'a, T> {
+    fn clone(&self) -> Self {
+        Self { ptr: self.ptr }
+    }
+}
+impl<'a, T: TrivialClone> Copy for Shared<'a, T> {}
+impl<'a, T: TrivialClone> Shared<'a, T> {
+    pub fn create(arena: &'a Arena, value: T) -> Self {
+        Self {
+            ptr: arena.alloc(SpinLock::new(value)),
+        }
+    }
+
+    pub fn load(&self) -> T {
+        self.ptr.get()
+    }
+
+    pub fn store(&self, value: T) {
+        self.ptr.store(value);
+    }
+
+    pub fn lock(&self) -> Lock<'a, T> {
+        self.ptr.lock()
+    }
+}
+
+impl<'a, T: TrivialClone> Trivial for Shared<'a, T> {}
