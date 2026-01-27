@@ -14,7 +14,16 @@ pub struct Pos2 {
 pub struct State {
     pub table: BTreeMap<GlobalId, GameObject>,
 }
+#[derive(Serialize, Deserialize, Clone, Debug)]
 
+pub struct UserInfo {
+    pub username: String,
+}
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct NetState {
+    pub state: State,
+    pub users: BTreeMap<GlobalId, UserInfo>,
+}
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct GameObject {
     pub center: Pos2,
@@ -84,5 +93,21 @@ pub enum MessageData {
     UpdateObject {
         id: GlobalId,
         object: GameObject,
+    },
+    SetObjectName {
+        id: GlobalId,
+        name: String,
+    },
+    SetUsername {
+        id: GlobalId,
+        name: String,
+    },
+    RequestState,
+    SendState {
+        state: State,
+    },
+    RequestNetState,
+    SendNetState {
+        net_state: NetState,
     },
 }
