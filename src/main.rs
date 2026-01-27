@@ -6,6 +6,7 @@ use raylib::{color::Color, math::Vector2, prelude::RaylibDraw};
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use transir::trans;
 pub mod rtils;
+pub mod state;
 pub mod tgui;
 pub mod transgui;
 pub fn old_main() {
