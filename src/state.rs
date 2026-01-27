@@ -1,4 +1,4 @@
-use crate::dos::Color;
+use crate::dos::{Color, Sprite};
 pub use crate::id::GlobalId;
 pub use serde::{Deserialize, Serialize};
 pub use std::collections::BTreeMap;
@@ -18,11 +18,13 @@ pub struct State {
 
 pub struct UserInfo {
     pub username: String,
+    pub profile_picture: String,
 }
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct NetState {
     pub state: State,
     pub users: BTreeMap<GlobalId, UserInfo>,
+    pub sprites: BTreeMap<String, Sprite>,
 }
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct GameObject {
