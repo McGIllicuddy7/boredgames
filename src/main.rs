@@ -1,16 +1,11 @@
-use crate::rtils::rtils_useful::{Arena, Set, dyn_sprintf};
+use crate::rtils::rtils_useful::{Arena, Set, SharedList, dyn_sprintf};
 #[allow(unused)]
-use crate::{
-    sharedlist::SharedList,
-    transgui::{ElementId, ListView, TransGui, TransIr},
-};
+use crate::transgui::{ElementId, ListView, TransGui, TransIr};
 use raylib::{color::Color, math::Vector2, prelude::RaylibDraw};
 #[allow(unused)]
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use transir::trans;
-pub mod marathon;
 pub mod rtils;
-pub mod sharedlist;
 pub mod tgui;
 pub mod transgui;
 pub fn old_main() {

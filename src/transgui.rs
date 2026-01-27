@@ -6,8 +6,7 @@ use std::{
 use raylib::{color::Color, prelude::RaylibDrawHandle};
 
 use crate::{
-    rtils::rtils_useful::{Exception, Immutable, Throws},
-    sharedlist::SharedList,
+    rtils::rtils_useful::{Exception, Immutable, SharedList, Throws},
     tgui::{ComputedBoundary, GuiObject, TGui, TGuiOutput, get_string_bounds},
 };
 
