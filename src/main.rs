@@ -1,13 +1,14 @@
-use raylib::{color::Color, math::Vector2, prelude::RaylibDraw};
-use transir::trans;
-
+use crate::arena::Set;
+#[allow(unused)]
 use crate::{
     arena::{BString, Map, dyn_sprintf},
     sharedlist::SharedList,
     transgui::{ElementId, ListView, TransGui, TransIr},
 };
+use raylib::{color::Color, math::Vector2, prelude::RaylibDraw};
 #[allow(unused)]
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use transir::trans;
 pub mod arena;
 pub mod marathon;
 pub mod rtils;
@@ -81,6 +82,11 @@ pub fn old_main() {
 
 pub fn main() {
     let are = arena::Arena::new();
-    let x = sprintf!(&are, "hello world:%d", "testing");
-    println!("{}", x);
+    let mut set = Set::new(&are);
+    for i in 0..10 {
+        set.insert(i);
+    }
+    for i in 0..10 {
+        assert!(set.contains(&i));
+    }
 }

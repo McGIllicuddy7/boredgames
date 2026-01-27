@@ -1,8 +1,8 @@
 use std::{
+    borrow::Borrow,
     cell::{Cell, UnsafeCell},
     fmt::{Debug, Display, Formatter, Write},
     hash::{DefaultHasher, Hash, Hasher},
-    mem::MaybeUninit,
     ops::{Deref, DerefMut, Index, IndexMut},
     sync::{
         Arc, Mutex,
@@ -12,8 +12,6 @@ use std::{
         },
     },
 };
-
-use crate::marathon::BStream;
 
 pub trait Trivial {
     const IS_TRIVIAL: bool = const {
@@ -82,7 +80,7 @@ impl<T> Trivial for Cell<T> {}
 impl<const COUNT: usize, T: Trivial> Trivial for [T; COUNT] {}
 impl<T: ?Sized> Trivial for &T {}
 impl<T> Trivial for &mut T {}
-
+impl Trivial for () {}
 pub struct SpinLock<T> {
     cell: UnsafeCell<T>,
     lock: AtomicBool,
@@ -666,12 +664,18 @@ impl<'a, T: TrivialClone> IndexMut<usize> for ListMut<'a, T> {
     }
 }
 
-#[derive(Debug)]
 pub struct Map<'a, T: TrivialClone + Hash + Eq, U: TrivialClone> {
     table: &'a mut ListMut<'a, ListMut<'a, (T, U)>>,
 }
+impl<'a, T: TrivialClone + Hash + Eq, U: TrivialClone> Clone for Map<'a, T, U> {
+    fn clone(&self) -> Self {
+        Self {
+            table: self.table.get_arena().alloc(self.table.clone()),
+        }
+    }
+}
 impl<'a, T: TrivialClone + Hash + Eq, U: TrivialClone> Trivial for Map<'a, T, U> {}
-impl<'a, T: TrivialClone + Hash + Eq + Debug, U: TrivialClone + Debug> Map<'a, T, U> {
+impl<'a, T: TrivialClone + Hash + Eq, U: TrivialClone> Map<'a, T, U> {
     pub fn new(arena: &'a Arena) -> Self {
         assert!(Self::IS_TRIVIAL);
         let mut list = arena.alloc(ListMut::Empty(arena));
@@ -690,8 +694,8 @@ impl<'a, T: TrivialClone + Hash + Eq + Debug, U: TrivialClone + Debug> Map<'a, T
     }
 
     pub fn insert(&mut self, key: T, value: U) -> Option<U> {
-        if self.occupancy() > 0.8 {
-            self.resize(self.table.len() * 8);
+        if self.occupancy() > 1.5 {
+            self.resize(self.table.len() * 2);
         }
         let mut hs = DefaultHasher::new();
         key.hash(&mut hs);
@@ -720,7 +724,10 @@ impl<'a, T: TrivialClone + Hash + Eq + Debug, U: TrivialClone + Debug> Map<'a, T
         None
     }
 
-    pub fn get(&self, key: &T) -> Option<&U> {
+    pub fn get<V: PartialEq + Hash>(&self, key: &V) -> Option<&U>
+    where
+        T: Borrow<V>,
+    {
         let mut hs = DefaultHasher::new();
         key.hash(&mut hs);
         let idx = hs.finish() as usize;
@@ -729,14 +736,23 @@ impl<'a, T: TrivialClone + Hash + Eq + Debug, U: TrivialClone + Debug> Map<'a, T
         let ls_len = ls.len();
         for i in 0..ls_len {
             let (k, v) = &ls[i];
-            if *k == *key {
+            if k.borrow() == key {
                 return Some(v);
             }
         }
         None
     }
 
-    pub fn get_mut(&mut self, key: &T) -> Option<&mut U> {
+    pub fn contains<V: PartialEq + Hash>(&self, key: &V) -> bool
+    where
+        T: Borrow<V>,
+    {
+        self.get(key).is_some()
+    }
+    pub fn get_mut<V: PartialEq + Hash>(&mut self, key: &V) -> Option<&mut U>
+    where
+        T: AsRef<V>,
+    {
         let mut hs = DefaultHasher::new();
         key.hash(&mut hs);
         let idx = hs.finish() as usize;
@@ -745,7 +761,7 @@ impl<'a, T: TrivialClone + Hash + Eq + Debug, U: TrivialClone + Debug> Map<'a, T
         let ls_len = ls.len();
         for i in 0..ls_len {
             let (k, _) = &ls[i];
-            if *k == *key {
+            if k.as_ref() == key {
                 let (_, v) = &mut ls[i];
                 return Some(v);
             }
@@ -753,7 +769,10 @@ impl<'a, T: TrivialClone + Hash + Eq + Debug, U: TrivialClone + Debug> Map<'a, T
         None
     }
 
-    pub fn remove(&mut self, key: &T) -> Option<(T, U)> {
+    pub fn remove<V: PartialEq + Hash>(&mut self, key: &V) -> Option<(T, U)>
+    where
+        T: Borrow<V>,
+    {
         let mut hs = DefaultHasher::new();
         key.hash(&mut hs);
         let idx = hs.finish() as usize;
@@ -763,7 +782,7 @@ impl<'a, T: TrivialClone + Hash + Eq + Debug, U: TrivialClone + Debug> Map<'a, T
         let arena = ls.get_arena();
         for i in 0..ls_len {
             let (k, _) = ls.get(i).unwrap();
-            if *k != *key {
+            if k.borrow() != key {
                 continue;
             }
             if i == 0 {
@@ -803,7 +822,149 @@ impl<'a, T: TrivialClone + Hash + Eq + Debug, U: TrivialClone + Debug> Map<'a, T
         for i in 0..len {
             hits += self.table[i].len() as f64;
         }
-        return hits / bins;
+        hits / bins
+    }
+
+    pub fn get_iter(&self) -> impl Iterator<Item = &(T, U)> {
+        struct Out<'a, 'b, T: TrivialClone + Hash + Eq, U: TrivialClone> {
+            ix: &'b Map<'a, T, U>,
+            i: usize,
+            j: usize,
+        }
+
+        impl<'a, 'b, T: TrivialClone + Hash + Eq, U: TrivialClone> Iterator for Out<'a, 'b, T, U> {
+            type Item = &'b (T, U);
+            fn next(&mut self) -> Option<Self::Item> {
+                if self.ix.table.len() <= self.i {
+                    return None;
+                }
+                if self.ix.table[self.i].len() <= self.j {
+                    self.j = 0;
+                    self.i += 1;
+                }
+                if self.ix.table.len() <= self.i {
+                    return None;
+                }
+                let out = self.ix.table.get(self.i).unwrap().get(self.j);
+                self.j += 1;
+                out
+            }
+        }
+        Out {
+            ix: self,
+            i: 0,
+            j: 0,
+        }
+    }
+    pub fn get_iter_mut(&'a mut self) -> impl Iterator<Item = &'a mut (T, U)> {
+        struct Out<'a, T: TrivialClone + Hash + Eq, U: TrivialClone> {
+            ix: &'a mut Map<'a, T, U>,
+            i: usize,
+            j: usize,
+        }
+
+        impl<'a, T: TrivialClone + Hash + Eq, U: TrivialClone> Iterator for Out<'a, T, U> {
+            type Item = &'a mut (T, U);
+            fn next(&mut self) -> Option<Self::Item> {
+                if self.ix.table.len() <= self.i {
+                    return None;
+                }
+                if self.ix.table[self.i].len() <= self.j {
+                    self.j = 0;
+                    self.i += 1;
+                }
+                if self.ix.table.len() <= self.i {
+                    return None;
+                }
+                let node = self.ix.table[self.i].get_node_mut(self.j)?;
+                Some(node.value)
+            }
+        }
+        Out {
+            ix: self,
+            i: 0,
+            j: 0,
+        }
+    }
+}
+
+impl<'a, T: TrivialClone + Hash + Eq + Debug, U: TrivialClone + Hash + Eq + Debug> Debug
+    for Map<'a, T, U>
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut list = f.debug_list();
+        for i in 0..self.table.len() {
+            for j in 0..self.table[i].len() {
+                let t = self.table[i][j].clone();
+                list.entry(&t);
+            }
+        }
+        list.finish()
+    }
+}
+
+#[derive(Clone)]
+pub struct Set<'a, T: TrivialClone + Hash + Eq + Debug> {
+    internal: Map<'a, T, ()>,
+}
+impl<'a, T: TrivialClone + Hash + Eq + Debug> Trivial for Set<'a, T> {}
+impl<'a, T: TrivialClone + Hash + Eq + Debug> Set<'a, T> {
+    pub fn new(arena: &'a Arena) -> Self {
+        Self {
+            internal: Map::new(arena),
+        }
+    }
+
+    pub fn with_capacity(arena: &'a Arena, capacity: usize) -> Self {
+        Self {
+            internal: Map::with_capacity(arena, capacity),
+        }
+    }
+
+    pub fn insert(&mut self, key: T) {
+        self.internal.insert(key, ());
+    }
+
+    pub fn contains<V: PartialEq + Hash>(&self, key: &V) -> bool
+    where
+        T: Borrow<V>,
+    {
+        self.internal.contains(key)
+    }
+
+    pub fn remove<V: PartialEq + Hash>(&mut self, key: &V) -> Option<T>
+    where
+        T: Borrow<V>,
+    {
+        self.internal.remove(key).map(|(i, _)| i)
+    }
+
+    pub fn resize(&mut self, new_size: usize) {
+        self.internal.resize(new_size);
+    }
+
+    pub fn occupancy(&self) -> f64 {
+        self.internal.occupancy()
+    }
+
+    pub fn get_iter(&self) -> impl Iterator<Item = &T> {
+        self.internal.get_iter().map(|(i, _)| i)
+    }
+
+    pub fn get_iter_mut(&'a mut self) -> impl Iterator<Item = &'a mut T> {
+        self.internal.get_iter_mut().map(|(i, _)| i)
+    }
+}
+impl<'a, T: TrivialClone + Hash + Eq + Debug> Debug for Set<'a, T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut list = f.debug_list();
+        for i in 0..self.internal.table.len() {
+            for j in 0..self.internal.table[i].len() {
+                let (x, _) = self.internal.table[i][j].clone();
+                list.entry(&x);
+            }
+        }
+        list.finish()
     }
 }
 
