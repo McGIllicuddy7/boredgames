@@ -31,13 +31,12 @@ impl GlobalIdAllocatorInner {
     }
 
     pub fn collect_garbage<U: ArachneId, T>(&mut self, map: &BTreeMap<U, T>) {
-        for (key, _) in map {
+        for key in map.keys() {
             let page = (key.get() / PAGE_SIZE) * PAGE_SIZE;
-            if !self.allocated_page_set.contains(&page) {
-                if self.resident_page_set.contains(&page) {
+            if !self.allocated_page_set.contains(&page)
+                && self.resident_page_set.contains(&page) {
                     self.resident_page_set.remove(&page);
                 }
-            }
         }
     }
 }
@@ -75,6 +74,12 @@ impl ArachneId for GlobalId {
 
 pub struct IdPageAllocator {
     inner: Mutex<GlobalIdAllocatorInner>,
+}
+
+impl Default for IdPageAllocator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl IdPageAllocator {

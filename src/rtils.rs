@@ -777,6 +777,16 @@ pub mod rtils_useful {
             sending.push_back(v);
             Ok(())
         }
+        pub fn send_multiple(&self, v: &mut Vec<T>) -> Throws<()> {
+            if self.done.load(std::sync::atomic::Ordering::Acquire) {
+                return Err("done".into());
+            }
+            let mut sending = self.sending.lock().unwrap();
+            for i in v.drain(0..v.len()) {
+                sending.push_back(i);
+            }
+            Ok(())
+        }
 
         pub fn recieve(&self) -> Throws<Option<T>> {
             if self.done.load(std::sync::atomic::Ordering::Acquire) {
@@ -2204,7 +2214,7 @@ where {
             Self {
                 buf: arena.alloc_bytes(16, 1),
                 len: 0,
-                arena: arena,
+                arena,
             }
         }
 
@@ -2362,12 +2372,14 @@ where {
 
     impl<'a, T: TrivialClone> Trivial for Ptr<'a, T> {}
 
+    #[derive(Serialize, Deserialize)]
     struct SharedListInner<T> {
         mutated: bool,
         locked: bool,
         list: Vec<T>,
     }
 
+    #[derive(Serialize, Deserialize)]
     pub struct SharedList<T: Clone> {
         list: Arc<RwLock<SharedListInner<T>>>,
         has_lock: AtomicBool,
@@ -2379,6 +2391,17 @@ where {
                 list: self.list.clone(),
                 has_lock,
             }
+        }
+    }
+
+    impl<T: Clone + Debug> Debug for SharedList<T> {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            let list = self.list.read().unwrap();
+            let mut dbgl = f.debug_list();
+            for i in list.list.iter() {
+                dbgl.entry(i);
+            }
+            dbgl.finish()
         }
     }
     impl<T: Clone> Default for SharedList<T> {
@@ -2412,11 +2435,12 @@ where {
                 yield_now();
             }
         }
-        pub fn push(&self, v: T) {
+        pub fn push(&self, v: T) -> usize {
             self.handle_locks();
             let mut list = self.list.write().unwrap();
             list.list.push(v);
             list.mutated = true;
+            list.list.len()
         }
 
         pub fn pop(&self) -> Option<T> {
