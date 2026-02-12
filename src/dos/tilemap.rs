@@ -1,19 +1,20 @@
-use std::{collections::BTreeMap, sync::atomic::AtomicU16};
+use std::collections::BTreeMap;
+use std::sync::atomic::AtomicU64;
 
 use super::SysHandle;
 
 use super::common::*;
 #[repr(C)]
-#[derive(Serialize, Deserialize, Clone, Copy, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Sprite {
     //please don't write to this :3, thank you
-    pub id: u16,
+    pub id: KeyType,
     pub x_pos: i16,
     pub y_pos: i16,
     pub width: u16,
     pub height: u16,
-    pub image_id: u16,
-    pub display_name: u16,
+    pub image_id: KeyType,
+    pub display_name: Arc<str>,
     pub layer: u8,
 }
 
@@ -23,19 +24,21 @@ pub const HIDDEN_LAYER: usize = 2;
 pub const FOREGROUND_LAYER: usize = 3;
 pub const LAYER_COUNT: usize = 4;
 
+pub type KeyType = u64;
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TileMapData {
     //in drawn order
-    background: String,
-    layers: [Arc<[AtomicU16]>; LAYER_COUNT],
-    draw_table: BTreeMap<u16, String>,
+    pub background: String,
+    pub layers: [Arc<[AtomicU64]>; LAYER_COUNT],
+    pub draw_table: BTreeMap<KeyType, String>,
     //in drawn order
-    sprites: BTreeMap<u16, Sprite>,
-    name_table: BTreeMap<u16, String>,
-    map_width: i32,
-    map_height: i32,
+    pub sprites: BTreeMap<KeyType, Sprite>,
+    pub name_table: BTreeMap<KeyType, String>,
+    pub map_width: i32,
+    pub map_height: i32,
 }
+
 #[repr(C)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TileMap {
@@ -45,32 +48,32 @@ pub struct TileMap {
     center_x: i32,
     center_y: i32,
     allow_mouse_input: bool,
-    selected: Option<u16>,
+    selected: Option<KeyType>,
 }
 
 impl TileMap {
     pub fn new(width: i32, height: i32, background: String, draw_table: Vec<String>) -> Self {
         let mut dc1 = Vec::new();
         for _ in 0..width * height {
-            dc1.push(AtomicU16::new(0));
+            dc1.push(AtomicU64::new(0));
         }
         let mut dc2 = Vec::new();
         for _ in 0..width * height {
-            dc2.push(AtomicU16::new(0));
+            dc2.push(AtomicU64::new(0));
         }
         let mut dc3 = Vec::new();
         for _ in 0..width * height {
-            dc3.push(AtomicU16::new(0));
+            dc3.push(AtomicU64::new(0));
         }
         let mut dc4 = Vec::new();
         for _ in 0..width * height {
-            dc4.push(AtomicU16::new(0));
+            dc4.push(AtomicU64::new(0));
         }
 
         let layers = [dc1.into(), dc2.into(), dc3.into(), dc4.into()];
         let mut table = BTreeMap::new();
         for (i, s) in draw_table.iter().enumerate() {
-            let idx = (i + 1) as u16;
+            let idx = (i + 1) as KeyType;
             table.insert(idx, s.clone());
         }
         Self {
@@ -92,12 +95,12 @@ impl TileMap {
         }
     }
 
-    pub fn get_tile(&self, layer: usize, x: i32, y: i32) -> u16 {
+    pub fn get_tile(&self, layer: usize, x: i32, y: i32) -> KeyType {
         self.data.layers[layer][(y * self.data.map_width + x) as usize]
             .load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    pub fn set_tile<T: Into<u16>>(&self, layer: usize, x: i32, y: i32, to: T) {
+    pub fn set_tile<T: Into<KeyType>>(&self, layer: usize, x: i32, y: i32, to: T) {
         self.data.layers[layer][(y * self.data.map_width + x) as usize]
             .store(to.into(), std::sync::atomic::Ordering::SeqCst);
     }
@@ -108,17 +111,17 @@ impl TileMap {
         pos_y: i32,
         w: i32,
         h: i32,
-        img: u16,
+        img: KeyType,
         layer: usize,
-    ) -> u16 {
+    ) -> KeyType {
         let mut id = 1;
-        for i in 1..=u16::MAX {
+        for i in 1..=KeyType::MAX {
             id = i;
             if !self.data.sprites.contains_key(&i) {
                 break;
             }
         }
-        if id == u16::MAX {
+        if id == KeyType::MAX {
             0
         } else {
             let s = Sprite {
@@ -128,35 +131,69 @@ impl TileMap {
                 width: w as u16,
                 height: h as u16,
                 image_id: img,
-                display_name: 0,
+                display_name: String::new().into(),
                 layer: layer as u8,
             };
             self.data.sprites.insert(id, s);
             id
         }
     }
-
-    pub fn get_sprite(&self, id: u16) -> Sprite {
-        self.data.sprites[&id]
+    pub fn create_sprite_with_id(
+        &mut self,
+        id: KeyType,
+        pos_x: i32,
+        pos_y: i32,
+        w: i32,
+        h: i32,
+        img: KeyType,
+        layer: usize,
+    ) {
+        let s = Sprite {
+            id,
+            x_pos: pos_x as i16,
+            y_pos: pos_y as i16,
+            width: w as u16,
+            height: h as u16,
+            image_id: img,
+            display_name: String::new().into(),
+            layer: layer as u8,
+        };
+        self.data.sprites.insert(id, s);
+    }
+    pub fn get_sprite(&self, id: KeyType) -> Sprite {
+        self.data.sprites[&id].clone()
     }
 
-    pub fn set_sprite(&mut self, id: u16, sprite: Sprite) {
+    pub fn set_sprite(&mut self, id: KeyType, sprite: Sprite) {
         *self.data.sprites.get_mut(&id).unwrap() = sprite;
     }
+    pub fn get_sprites(&self) -> BTreeMap<KeyType, Sprite> {
+        self.data.sprites.clone()
+    }
+    pub fn get_data(&self) -> TileMapData {
+        self.data.clone()
+    }
+    pub fn set_sprites(&mut self, sprites: BTreeMap<KeyType, Sprite>) {
+        self.data.sprites = sprites;
+    }
 
-    pub fn delete_sprite(&mut self, id: u16) {
+    pub fn set_data(&mut self, data: TileMapData) {
+        self.data = data;
+    }
+
+    pub fn delete_sprite(&mut self, id: KeyType) {
         self.data.sprites.remove(&id);
     }
 
-    pub fn check_sprite_exists(&self, id: u16) -> bool {
+    pub fn check_sprite_exists(&self, id: KeyType) -> bool {
         self.data.sprites.contains_key(&id)
     }
 
-    pub fn get_image_id(&self, name: &str) -> Option<u16> {
+    pub fn get_image_id(&self, name: &str) -> Option<KeyType> {
         for i in 0..self.data.draw_table.len() {
-            if let Some(x) = self.data.draw_table.get(&(i as u16)) {
+            if let Some(x) = self.data.draw_table.get(&(i as KeyType)) {
                 if x == name {
-                    return Some(i as u16 + 1);
+                    return Some(i as KeyType + 1);
                 }
             } else {
                 break;
@@ -166,9 +203,9 @@ impl TileMap {
     }
 
     //no u cannot unload images, l+ratio
-    pub fn load_image(&mut self, name: &str) -> u16 {
+    pub fn load_image(&mut self, name: &str) -> KeyType {
         let mut idx = 1;
-        for i in 1..u16::MAX {
+        for i in 1..KeyType::MAX {
             if !self.data.draw_table.contains_key(&i) {
                 idx = i;
                 break;
@@ -177,7 +214,12 @@ impl TileMap {
         self.data.draw_table.insert(idx, name.to_string());
         idx
     }
-
+    pub fn set_draw_table(&mut self, names: &[String]) {
+        self.data.draw_table.clear();
+        for i in names {
+            self.load_image(i);
+        }
+    }
     pub fn get_map_dimensions(&self) -> (i32, i32) {
         (self.data.map_width, self.data.map_height)
     }
@@ -230,7 +272,7 @@ impl TileMap {
         h: i32,
         handle: &mut SysHandle,
         draw_hidden: bool,
-    ) -> (Option<Pos2>, Option<(u16, Pos2)>) {
+    ) -> (Option<Pos2>, Option<(KeyType, Pos2)>) {
         let mut queue = Vec::new();
         let start_x = self.center_x - self.draw_width / 2;
         let start_y = self.center_y - self.draw_height / 2;
@@ -309,11 +351,7 @@ impl TileMap {
                 if sprite.layer as usize != i {
                     continue;
                 }
-                if self
-                    .selected
-                    .map(|i| i == *id)
-                    .unwrap_or(false)
-                {
+                if self.selected.map(|i| i == *id).unwrap_or(false) {
                     continue;
                 };
                 let px = (sprite.x_pos as i32 - start_x) as f64 * xshift;

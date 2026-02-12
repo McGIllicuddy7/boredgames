@@ -790,7 +790,7 @@ pub mod rtils_useful {
 
         pub fn recieve(&self) -> Throws<Option<T>> {
             if self.done.load(std::sync::atomic::Ordering::Acquire) {
-                todo!()
+                return Ok(None);
             }
             let mut recieving = self.recieving.lock().unwrap();
             Ok(recieving.pop_front())
@@ -2442,7 +2442,15 @@ where {
             list.mutated = true;
             list.list.len()
         }
-
+        pub fn push_multiple(&self, v: &[T]) -> usize {
+            self.handle_locks();
+            let mut list = self.list.write().unwrap();
+            for i in v {
+                list.list.push(i.clone());
+            }
+            list.mutated = true;
+            list.list.len()
+        }
         pub fn pop(&self) -> Option<T> {
             self.handle_locks();
             let mut list = self.list.write().unwrap();

@@ -8,7 +8,7 @@ pub struct GlobalIdAllocatorInner {
     pub resident_page_set: BTreeSet<u64>,
     pub allocated_page_set: BTreeSet<u64>,
 }
-
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct IdAllocatorInner {
     pub start: u64,
     pub used: BTreeSet<u64>,
@@ -17,10 +17,11 @@ pub struct IdAllocatorInner {
 impl GlobalIdAllocatorInner {
     pub fn alloc_page(&mut self) -> u64 {
         for i in 1..MAX_PAGE_COUNT {
-            if !self.allocated_page_set.contains(&i) && !self.resident_page_set.contains(&i) {
-                self.allocated_page_set.insert(i);
-                self.resident_page_set.insert(i);
-                return i;
+            let idx = i * PAGE_SIZE;
+            if !self.allocated_page_set.contains(&idx) && !self.resident_page_set.contains(&idx) {
+                self.allocated_page_set.insert(idx);
+                self.resident_page_set.insert(idx);
+                return idx;
             }
         }
         panic!("no pages remaining");
@@ -33,10 +34,9 @@ impl GlobalIdAllocatorInner {
     pub fn collect_garbage<U: ArachneId, T>(&mut self, map: &BTreeMap<U, T>) {
         for key in map.keys() {
             let page = (key.get() / PAGE_SIZE) * PAGE_SIZE;
-            if !self.allocated_page_set.contains(&page)
-                && self.resident_page_set.contains(&page) {
-                    self.resident_page_set.remove(&page);
-                }
+            if !self.allocated_page_set.contains(&page) && self.resident_page_set.contains(&page) {
+                self.resident_page_set.remove(&page);
+            }
         }
     }
 }
@@ -104,7 +104,7 @@ impl IdPageAllocator {
         self.inner.lock().unwrap().collect_garbage(map);
     }
 }
-
+#[derive(Serialize, Deserialize, Debug)]
 pub struct IdAllocator {
     inner: Mutex<IdAllocatorInner>,
 }
