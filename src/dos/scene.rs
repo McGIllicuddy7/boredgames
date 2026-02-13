@@ -289,7 +289,7 @@ impl SceneRenderer {
             //  shade.set_shader_value_texture(map_locks[i], &self.shadow_map_textures[i]);
             unsafe {
                 raylib::ffi::rlActiveTextureSlot(10 + i as i32);
-                raylib::ffi::rlEnableTexture(self.shadow_map_textures[i].depth.id);
+                raylib::ffi::rlEnableTexture(self.shadow_map_textures[i].texture.id);
                 raylib::ffi::rlSetUniform(
                     map_locks[i],
                     &(10 + i) as *const _ as *const _,
@@ -325,14 +325,15 @@ impl SceneRenderer {
             scene.lights[&idx].pos,
             scene.lights[&idx].direction + scene.lights[&idx].pos,
             scene.lights[&idx].up,
-            110.0,
+            scene.lights[&idx].fov,
         );
         let mut draw = draw.begin_mode3D(cam);
-        let view = unsafe { Matrix::from(raylib::ffi::rlGetMatrixModelview()) };
-        let proj = unsafe { Matrix::from(raylib::ffi::rlGetMatrixProjection()) };
         unsafe {
             raylib::ffi::rlSetClipPlanes(0.01, 1000.0);
         }
+        let view = unsafe { Matrix::from(raylib::ffi::rlGetMatrixModelview()) };
+        let proj = unsafe { Matrix::from(raylib::ffi::rlGetMatrixProjection()) };
+
         let shade = self.shader.as_mut().unwrap();
         let depth_lock = shade.get_shader_location("depth");
         let cam_lock = shade.get_shader_location("cam_lock");
@@ -349,7 +350,7 @@ impl SceneRenderer {
             draw.draw_model(mesh, obj.position, 1.0, Color::WHITE);
         }
         self.to_load = to_load;
-        proj * view
+        view * proj
     }
 
     pub fn render(

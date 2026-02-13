@@ -43,17 +43,17 @@ vec4 light_and_shadow_calculations(int idx) {
   vec4 texelColor = texture(texture0, fragTexCoord);
   vec3 lightDot = vec3(0.0);
   vec3 normal = normalize(fragNormal);
-  vec3 viewD = normalize(viewPos[idx] - fragPosition);
+  vec3 viewD = normalize(fragPosition - viewPos[idx]);
   vec3 specular = vec3(0.0);
   vec3 l = -lightDir[idx];
-  float NdotL = max(dot(normal, -l), 0.0);
+  float NdotL = max(dot(normal, l), 0.0);
   lightDot += lightColor[idx].rgb * NdotL;
   float specCo = 1.0;
   if (NdotL > 0.0) {
     specCo = pow(max(0.0, dot(viewD, reflect(-(l), normal))),
                  16.0); // 16 refers to shine
   }
-  float dt = dot(normalize(viewPos[idx] - fragPosition), lightDir[idx]);
+  float dt = dot(normalize(viewPos[idx] - fragPosition), -lightDir[idx]);
   if (dt < cos(fovs[idx] / 2.0)) {
     return vec4(0.0);
   }
@@ -75,36 +75,36 @@ vec4 light_and_shadow_calculations(int idx) {
   } else {
     fragPosLightSpace = lightVP3 * vec4(fragPosition, 1);
   }
+
   fragPosLightSpace.xyz /=
       fragPosLightSpace.w; // Perform the perspective division
   fragPosLightSpace.xyz = (fragPosLightSpace.xyz + 1.0) /
                           2.0; // Transform from [-1, 1] range to [0, 1] range
   vec2 sampleCoords = fragPosLightSpace.xy;
-  float curDepth = fragPosLightSpace.z * 12.;
-
+  float curDepth = length(light_positions[idx] - fragPosition) / 512.0;
+  if (false) {
+    out_col.r = curDepth;
+    out_col.bg = vec2(curDepth);
+    out_col.a = 1.0;
+    return out_col;
+  }
   // Slope-scale depth bias: depth biasing reduces "shadow
   // acne" artifacts, where dark stripes appear all over the
   // scene The solution is adding a small bias to the depth In
   // this case, the bias is proportional to the slope of the
   // surface, relative to the light float bias = max(0.0002 *
-  // (1.0 - dot(normal, l)), 0.00002) + 0.00001;
-  float bias = max(0.0002 * (1.0 - dot(normal, l)), 0.00002) + 0.00001;
+  //
+  float bias =
+      0.0002 * max((1.0 - dot(normal, l)), 0.00002) + 1. / curDepth * 0.0005;
   int shadowCounter = 0;
-  const int numSamples = 9;
-  if (true) {
-    out_col.r = texture(smap0, sampleCoords).r;
-    out_col.g = curDepth;
-    out_col.b = 0.;
-    return out_col;
-  }
-
+  const int numSamples = 25;
   // PCF (percentage-closer filtering) algorithm:
   // Instead of testing if just one point is closer to the current point,
   // we test the surrounding points as well
   // This blurs shadow edges, hiding aliasing artifacts
   vec2 texelSize = vec2(1.0 / float(shadowMapResolution));
-  for (int x = -1; x <= 1; x++) {
-    for (int y = -1; y <= 1; y++) {
+  for (int x = -2; x <= 2; x++) {
+    for (int y = -2; y <= 2; y++) {
       if (idx == 0) {
         float sampleDepth =
             texture(smap0, sampleCoords + texelSize * vec2(x, y)).r;
@@ -130,15 +130,19 @@ vec4 light_and_shadow_calculations(int idx) {
     }
   }
   out_col =
-      mix(out_col, vec4(0, 0, 0, 1), float(shadowCounter) / float(numSamples));
-  return out_col / (length(curDepth) * length(curDepth));
+      mix(out_col, vec4(0, 0, 0, 1), float(shadowCounter) / float(numSamples)) /
+      (curDepth * curDepth * 256. * 12.);
+  return out_col;
 }
 void main() {
+  // finalColor.rbg = fragPosition.rgb;
+  // finalColor.a = 1.0;
+  // return;
   if (depth == 1) {
-    float r = fragPosition.z;
-    finalColor.r = 1.0;
-    finalColor.g = 0.0;
-    finalColor.b = 0.0;
+    float r = length(cam_pos - fragPosition) / 512.;
+    finalColor.r = r;
+    finalColor.g = r;
+    finalColor.b = r;
     finalColor.a = 1.0;
     return;
   } else if (depth == 2) {
