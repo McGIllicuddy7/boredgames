@@ -77,8 +77,6 @@ void main() {
   // finalColor = texelColor * colDiffuse * fragColor;
 
   vec4 base = texture(texture0, fragTexCoord);
-  finalColor = base;
-  return;
   vec4 col = vec4(0.0, 0.0, 0.0, 1.0);
   col.rgb = nearest_rgb_to_pallet(base.rgb);
   col.a = base.a;

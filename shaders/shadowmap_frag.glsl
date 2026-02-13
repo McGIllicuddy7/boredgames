@@ -94,7 +94,7 @@ vec4 light_and_shadow_calculations(int idx) {
   // this case, the bias is proportional to the slope of the
   // surface, relative to the light float bias = max(0.0002 *
   //
-  float bias = max(0.0005 * (1.0 - dot(normal, -l)), 0.002);
+  float bias = max(0.0002 * (1.0 - dot(normal, -l)), 0.002);
   int shadowCounter = 0;
   const int numSamples = 9;
   // PCF (percentage-closer filtering) algorithm:
@@ -129,8 +129,7 @@ vec4 light_and_shadow_calculations(int idx) {
     }
   }
   out_col =
-      mix(out_col, vec4(0, 0, 0, 1), float(shadowCounter) / float(numSamples)) /
-      (curDepth * 128.);
+      mix(out_col, vec4(0, 0, 0, 1), float(shadowCounter) / float(numSamples));
   return out_col;
 }
 void main() {
