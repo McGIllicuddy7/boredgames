@@ -48,7 +48,7 @@ fn main_func(mut handle: SysHandle) {
                         x: i as f32 * 5.0,
                         y: j as f32 * 5.0,
                         z: k as f32 * 5.0,
-                    } - Vector3::forward() * 20.0,
+                    },
                     rotation: Quaternion::identity(),
                 });
             }
