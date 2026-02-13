@@ -94,17 +94,16 @@ vec4 light_and_shadow_calculations(int idx) {
   // this case, the bias is proportional to the slope of the
   // surface, relative to the light float bias = max(0.0002 *
   //
-  float bias =
-      0.0002 * max((1.0 - dot(normal, l)), 0.00002) + 1. / curDepth * 0.0005;
+  float bias = max(0.0005 * (1.0 - dot(normal, -l)), 0.002);
   int shadowCounter = 0;
-  const int numSamples = 25;
+  const int numSamples = 9;
   // PCF (percentage-closer filtering) algorithm:
   // Instead of testing if just one point is closer to the current point,
   // we test the surrounding points as well
   // This blurs shadow edges, hiding aliasing artifacts
   vec2 texelSize = vec2(1.0 / float(shadowMapResolution));
-  for (int x = -2; x <= 2; x++) {
-    for (int y = -2; y <= 2; y++) {
+  for (int x = -1; x <= 1; x++) {
+    for (int y = -1; y <= 1; y++) {
       if (idx == 0) {
         float sampleDepth =
             texture(smap0, sampleCoords + texelSize * vec2(x, y)).r;
@@ -131,7 +130,7 @@ vec4 light_and_shadow_calculations(int idx) {
   }
   out_col =
       mix(out_col, vec4(0, 0, 0, 1), float(shadowCounter) / float(numSamples)) /
-      (curDepth * curDepth * 256. * 12.);
+      (curDepth * 128.);
   return out_col;
 }
 void main() {
