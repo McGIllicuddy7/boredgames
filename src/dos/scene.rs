@@ -84,6 +84,7 @@ impl GLightId {
         self.id != 0
     }
 }
+
 impl GLight {
     pub fn new(pos: Vector3, color: Color, radius: f32) -> Self {
         Self {
@@ -104,6 +105,7 @@ impl GLight {
             distances: [radius; 16],
         }
     }
+
     pub fn empty() -> Self {
         Self {
             pos: Vector3::zero(),
