@@ -11,3 +11,6 @@ serde = {version = "1.0.228", features = ["derive", "rc"]}
 tokio = {version = "1.49.0", features = ["full"]}
 [features]
 net = []
+
+[profile.release]
+debug = true

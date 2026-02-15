@@ -24,7 +24,7 @@ fn main_func(mut handle: SysHandle) {
         let _light_id = scene.create_light(GLight::new(
             Vector3::new(i as f32 * 10.0, 0.0, 0.0),
             Color::WHITE,
-            40.,
+            10.,
         ));
     }
 
@@ -34,9 +34,9 @@ fn main_func(mut handle: SysHandle) {
         bounds: BoundingBox::new(Vector3::new(-0.5, -0.5, -0.5), Vector3::new(0.5, 0.5, 0.5)),
         rotation: Quaternion::identity(),
     });
-    for i in -4..=4 {
-        for j in -3..3 {
-            for k in -3..=3 {
+    for i in -5..=5 {
+        for j in -5..5 {
+            for k in -5..=5 {
                 if i == j && j == k && k == 0 {
                     continue;
                 }
