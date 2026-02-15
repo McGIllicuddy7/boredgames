@@ -1,7 +1,8 @@
 use raylib::camera::Camera3D;
 use raylib::ffi::KeyboardKey;
-use raylib::math::{Matrix, Quaternion, Vector4};
-use raylib::models::{Model, RaylibMesh, RaylibModel};
+pub use raylib::math::BoundingBox;
+use raylib::math::{Quaternion, Ray, Vector4};
+use raylib::models::{Mesh, Model, RaylibMesh, RaylibModel};
 pub use raylib::prelude::{Color, Vector3};
 use raylib::prelude::{RaylibDraw, RaylibDraw3D, RaylibMode3DExt, RaylibTextureModeExt};
 use raylib::shaders::{RaylibShader, Shader};
@@ -17,18 +18,40 @@ pub struct GObject {
     pub model_name: Arc<str>,
     pub position: Vector3,
     pub rotation: Quaternion,
+    pub bounds: BoundingBox,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[repr(C)]
 pub struct GLight {
     pub pos: Vector3,
-    pub color: Color,
-    pub direction: Vector3,
-    pub up: Vector3,
-    pub fov: f32,
-    pub casts_shadows: bool,
+    pub color: Vector4,
+    pub radius: f32,
+    pub bounds: Vector3,
+    pub enabled: i32,
+    pub distances: [f32; 16],
 }
 
+pub fn cardinals() -> [Vector3; 16] {
+    [
+        Vector3::new(0.0, 0.0, 1.0).normalized(),
+        Vector3::new(0.0, 1.0, 0.0).normalized(),
+        Vector3::new(0.0, 1.0, 1.0).normalized(),
+        Vector3::new(1.0, 0.0, 0.0).normalized(),
+        Vector3::new(1.0, 0.0, 1.0).normalized(),
+        Vector3::new(1.0, 1.0, 0.0).normalized(),
+        Vector3::new(1.0, 1.0, 1.0).normalized(),
+        Vector3::new(0.0, 1.0, -1.0).normalized(),
+        Vector3::new(1.0, 0.0, -1.0).normalized(),
+        Vector3::new(1.0, -1.0, 0.0).normalized(),
+        Vector3::new(0.0, -1.0, 1.0).normalized(),
+        Vector3::new(-1.0, 0.0, 1.0).normalized(),
+        Vector3::new(-1.0, 1.0, 0.0).normalized(),
+        Vector3::new(0.0, -1.0, -1.0).normalized(),
+        Vector3::new(-1.0, 0.0, -1.0).normalized(),
+        Vector3::new(-1.0, -1.0, 0.0).normalized(),
+    ]
+}
 #[derive(Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
 pub struct GLightId {
     id: u32,
@@ -61,6 +84,41 @@ impl GLightId {
         self.id != 0
     }
 }
+impl GLight {
+    pub fn new(pos: Vector3, color: Color, radius: f32) -> Self {
+        Self {
+            pos,
+            color: Vector4 {
+                x: color.r as f32 / 255.,
+                y: color.g as f32 / 255.,
+                z: color.b as f32 / 255.,
+                w: color.a as f32 / 255.,
+            },
+            radius,
+            bounds: Vector3 {
+                x: radius * 2.,
+                y: radius * 2.,
+                z: radius * 2.,
+            },
+            enabled: 1,
+            distances: [radius; 16],
+        }
+    }
+    pub fn empty() -> Self {
+        Self {
+            pos: Vector3::zero(),
+            color: Vector4::new(0., 0., 0., 0.),
+            radius: 0.0,
+            bounds: Vector3 {
+                x: 0.,
+                y: 0.,
+                z: 0.,
+            },
+            enabled: 0,
+            distances: [0.0; 16],
+        }
+    }
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Scene {
@@ -68,6 +126,7 @@ pub struct Scene {
     pub cam_rot: Quaternion,
     pub objects: BTreeMap<GObjectId, GObject>,
     pub lights: BTreeMap<GLightId, GLight>,
+    pub f_debug_lights: bool,
 }
 impl Default for Scene {
     fn default() -> Self {
@@ -82,6 +141,7 @@ impl Scene {
             cam_rot: Quaternion::new(1.0, 0.0, 0.0, 0.0),
             objects: BTreeMap::new(),
             lights: BTreeMap::new(),
+            f_debug_lights: false,
         }
     }
 
@@ -186,7 +246,6 @@ impl Scene {
 
 pub struct SceneRenderer {
     pub loaded_meshes: HashMap<Arc<str>, Model>,
-    pub shadow_map_textures: Vec<RenderTexture2D>,
     pub to_load: HashSet<Arc<str>>,
     pub shader: Option<Shader>,
     pub x: i32,
@@ -205,7 +264,6 @@ impl SceneRenderer {
     pub fn new() -> Self {
         Self {
             loaded_meshes: HashMap::new(),
-            shadow_map_textures: Vec::new(),
             to_load: HashSet::new(),
             shader: None,
             x: 0,
@@ -215,195 +273,425 @@ impl SceneRenderer {
             should_draw: false,
         }
     }
-    pub fn render_scene(
+    pub fn setup_render(
         &mut self,
         scene: &Scene,
         handle: &mut RaylibHandle,
         thread: &RaylibThread,
-        projections: &[Matrix],
+    ) {
+        let directions = cardinals();
+        if self.shader.is_none() {
+            self.shader = Some(handle.load_shader(
+                thread,
+                Some("shaders/lighting.vs"),
+                Some("shaders/lighting.fs"),
+            ));
+            let mut msh = handle
+                .load_model_from_mesh(thread, unsafe {
+                    Mesh::gen_mesh_cube(thread, 1.0, 1.0, 1.0).make_weak()
+                })
+                .unwrap();
+            unsafe { (*msh.materials).shader = **self.shader.as_ref().unwrap() };
+            self.loaded_meshes.insert("box".into(), msh);
+        }
+        let shade = self.shader.as_mut().unwrap();
+        let pos_loc = shade.get_shader_location("lightPositions");
+        let col_loc = shade.get_shader_location("lightColors");
+        let rad_loc = shade.get_shader_location("lightRadii");
+        let enable_loc = shade.get_shader_location("lightEnabled");
+        let dist_lock = shade.get_shader_location("lightDistances");
+        let dir_lock = shade.get_shader_location("directions");
+        let lights: Vec<GLight> = scene.lights.iter().map(|i| *i.1).collect();
+        let _objects: Vec<GObject> = scene.objects.values().map(|i| i.clone()).collect();
+        let mut nearest_set: Vec<GLight> = take_min(
+            &mut |i: &GLight| (i.pos - scene.cam_pos).length() as f64,
+            &lights,
+            16,
+        );
+
+        for i in &mut nearest_set {
+            let pos = i.pos;
+            for (idx, j) in directions.iter().enumerate() {
+                let ray_dir = *j;
+                let mut min_dist = i.radius;
+                for (_, obj) in &scene.objects {
+                    let col = RotBox::new(obj.bounds, obj.rotation, obj.position);
+                    if let Some(dist) = col.ray_cast(pos, ray_dir) {
+                        if dist < min_dist {
+                            min_dist = dist;
+                        }
+                    }
+                }
+                i.distances[idx] = min_dist;
+            }
+        }
+        let mut positions = [Vector3::zero(); 16];
+        let mut colors = [Vector4::new(0.0, 0.0, 0.0, 0.0); 16];
+        let mut radii = [0.0; 16];
+        let mut enabled = [0; 16];
+        let mut distances = [0.0; 256];
+        for i in nearest_set.iter().enumerate() {
+            positions[i.0] = i.1.pos;
+            colors[i.0] = i.1.color;
+            radii[i.0] = i.1.radius;
+            enabled[i.0] = i.1.enabled;
+            for j in 0..16 {
+                distances[i.0 * 16 + j] = i.1.distances[j];
+            }
+        }
+        shade.set_shader_value_v(pos_loc, &positions);
+        shade.set_shader_value_v(col_loc, &colors);
+        shade.set_shader_value_v(rad_loc, &radii);
+        shade.set_shader_value_v(enable_loc, &enabled);
+        shade.set_shader_value_v(dist_lock, &distances);
+        shade.set_shader_value_v(dir_lock, &directions);
+    }
+
+    pub fn draw_scene(
+        &mut self,
+        scene: &Scene,
+        handle: &mut RaylibHandle,
+        thread: &RaylibThread,
         target: &mut RenderTexture2D,
     ) {
-        let mut handle = handle.begin_texture_mode(thread, target);
-        handle.clear_background(Color::BLACK);
-        let shade = self.shader.as_mut().unwrap();
-        let mat_locks = [
-            shade.get_shader_location("lightVP0"),
-            shade.get_shader_location("lightVP1"),
-            shade.get_shader_location("lightVP2"),
-            shade.get_shader_location("lightVP3"),
-        ];
-        let count_lock = shade.get_shader_location("light_count");
-        let col_lock = shade.get_shader_location("ambient");
-        let map_locks = [
-            shade.get_shader_location("smap0"),
-            shade.get_shader_location("smap1"),
-            shade.get_shader_location("smap2"),
-            shade.get_shader_location("smap3"),
-        ];
-        let dir_locks = shade.get_shader_location("lightDir");
-        let light_col_locks = shade.get_shader_location("lightColor");
-        let pos_locks = shade.get_shader_location("viewPos");
-        let res_loc = shade.get_shader_location("shadowMapResolution");
-        let cam_loc = shade.get_shader_location("cam_pos");
-        shade.set_shader_value(cam_loc, scene.cam_pos);
-        let fov_loc = shade.get_shader_location("fovs");
-        shade.set_shader_value(res_loc, 1024);
-        let mut dirs = [Vector3::zero(); 10];
-        let mut cols = [Vector4::new(0.0, 0.0, 0.0, 0.0); 10];
-        let mut poses = [Vector3::zero(); 10];
-        let mut fovs = [0.0; 10];
-        for (i, l) in scene.lights.iter().enumerate() {
-            if i >= 10 {
-                break;
-            }
-            dirs[i] = l.1.direction;
-            cols[i].x = l.1.color.r as f32 / 255.;
-            cols[i].y = l.1.color.g as f32 / 255.;
-            cols[i].z = l.1.color.b as f32 / 255.;
-            cols[i].w = l.1.color.a as f32 / 255.;
-            poses[i] = l.1.pos;
-            fovs[i] = l.1.fov;
-        }
-        shade.set_shader_value_v(light_col_locks, &cols);
-        shade.set_shader_value_v(dir_locks, &dirs);
-        shade.set_shader_value_v(pos_locks, &poses);
-        shade.set_shader_value_v(fov_loc, &fovs);
+        let mut draw = handle.begin_texture_mode(thread, target);
         let cam = Camera3D::perspective(
             scene.cam_pos,
             Vector3::forward().transform_with(scene.cam_rot.to_matrix()) + scene.cam_pos,
             Vector3::up().transform_with(scene.cam_rot.to_matrix()),
             90.0,
         );
-        shade.set_shader_value(count_lock, scene.lights.len() as i32);
-        shade.set_shader_value(col_lock, Vector4::new(1.0, 1.0, 1.0, 1.0));
-        let depth_lock = shade.get_shader_location("depth");
-        shade.set_shader_value(depth_lock, 0);
-        let mut draw = handle.begin_mode3D(cam);
-        unsafe {
-            raylib::ffi::rlSetClipPlanes(0.01, 1000.0);
-        }
-        for i in 0..projections.len() {
-            shade.set_shader_value_matrix(mat_locks[i], projections[i]);
-        }
-        for i in 0..projections.len() {
-            //  shade.set_shader_value_texture(map_locks[i], &self.shadow_map_textures[i]);
-            unsafe {
-                raylib::ffi::rlActiveTextureSlot(10 + i as i32);
-                raylib::ffi::rlEnableTexture(self.shadow_map_textures[i].texture.id);
-                raylib::ffi::rlSetUniform(
-                    map_locks[i],
-                    &(10 + i) as *const _ as *const _,
-                    raylib::ffi::ShaderUniformDataType::SHADER_UNIFORM_INT as i32,
-                    1,
-                );
-            }
-        }
-        let mut to_load = HashSet::new();
-        for obj in scene.objects.values() {
-            if !self.loaded_meshes.contains_key(&obj.model_name) {
-                to_load.insert(obj.model_name.clone());
-                continue;
-            }
-            let mesh = self.loaded_meshes.get_mut(&obj.model_name).unwrap();
-            mesh.transform = obj.rotation.to_matrix().into();
-            draw.draw_model(mesh, obj.position, 1.0, Color::WHITE);
-        }
-        self.to_load = to_load;
-    }
-
-    pub fn render_shadows(
-        &mut self,
-        scene: &Scene,
-        handle: &mut RaylibHandle,
-        thread: &RaylibThread,
-        idx: GLightId,
-        count: usize,
-    ) -> Matrix {
-        let mut draw = handle.begin_texture_mode(thread, &mut self.shadow_map_textures[count]);
-        draw.clear_background(Color::WHITE);
-        let cam = Camera3D::perspective(
-            scene.lights[&idx].pos,
-            scene.lights[&idx].direction + scene.lights[&idx].pos,
-            scene.lights[&idx].up,
-            scene.lights[&idx].fov,
-        );
+        draw.clear_background(Color::BLACK);
         let mut draw = draw.begin_mode3D(cam);
-        unsafe {
-            raylib::ffi::rlSetClipPlanes(0.01, 1000.0);
-        }
-        let view = unsafe { Matrix::from(raylib::ffi::rlGetMatrixModelview()) };
-        let proj = unsafe { Matrix::from(raylib::ffi::rlGetMatrixProjection()) };
-
-        let shade = self.shader.as_mut().unwrap();
-        let depth_lock = shade.get_shader_location("depth");
-        let cam_lock = shade.get_shader_location("cam_lock");
-        shade.set_shader_value(depth_lock, 1);
-        shade.set_shader_value(cam_lock, cam.position);
-        let mut to_load = HashSet::new();
-        for obj in scene.objects.values() {
-            if !self.loaded_meshes.contains_key(&obj.model_name) {
-                to_load.insert(obj.model_name.clone());
+        for (_, i) in scene.objects.iter() {
+            if !self.loaded_meshes.contains_key(&i.model_name) {
+                self.to_load.insert(i.model_name.clone());
                 continue;
             }
-            let mesh = self.loaded_meshes.get_mut(&obj.model_name).unwrap();
-            mesh.transform = obj.rotation.to_matrix().into();
-            draw.draw_model(mesh, obj.position, 1.0, Color::WHITE);
+            let md = self.loaded_meshes.get_mut(&i.model_name).unwrap();
+            md.transform = i.rotation.to_matrix().into();
+            draw.draw_model(&md, i.position, 1.0, Color::WHITE);
         }
-        self.to_load = to_load;
-        view * proj
+        if scene.f_debug_lights {
+            let directions = cardinals();
+            for (_, i) in scene.lights.iter() {
+                for (idx, j) in i.distances.iter().enumerate() {
+                    draw.draw_line_3D(i.pos, i.pos + directions[idx] * *j, Color::RED);
+                }
+            }
+        }
     }
 
+    #[allow(unused)]
     pub fn render(
         &mut self,
         scene: &Scene,
         handle: &mut RaylibHandle,
-        thread: &raylib::prelude::RaylibThread,
+        thread: &RaylibThread,
         target: &mut RenderTexture2D,
     ) {
-        if self.shader.is_none() {
-            self.shader = Some(handle.load_shader(
-                thread,
-                Some("shaders/shadow_map_vert.glsl"),
-                Some("shaders/shadowmap_frag.glsl"),
-            ));
-            let msh = unsafe {
-                let mut msh = handle
-                    .load_model_from_mesh(
-                        thread,
-                        raylib::models::Mesh::gen_mesh_cube(thread, 1.0, 1.0, 1.0).make_weak(),
-                    )
-                    .unwrap();
-                (*msh.materials).shader = *self.shader.as_deref().unwrap();
-                println!("{:#?}", msh.get_model_bounding_box());
-                msh
-            };
-            self.loaded_meshes.insert("box".into(), msh);
+        self.setup_render(scene, handle, thread);
+        self.draw_scene(scene, handle, thread, target);
+    }
+}
+
+pub fn take_min<T: Clone>(
+    get_value: &mut impl FnMut(&T) -> f64,
+    slice: &[T],
+    count: usize,
+) -> Vec<T> {
+    let mut out = slice.to_vec();
+    out.sort_by(|x, y| {
+        let vx = get_value(x);
+        let vy = get_value(y);
+        if vx > vy {
+            std::cmp::Ordering::Greater
+        } else if vx == vy {
+            std::cmp::Ordering::Equal
+        } else {
+            std::cmp::Ordering::Less
         }
-        if self.shadow_map_textures.len() < scene.lights.len() {
-            for _ in self.shadow_map_textures.len()..scene.lights.len() {
-                self.shadow_map_textures
-                    .push(handle.load_render_texture(thread, 1024, 1024).unwrap());
-            }
+    });
+    let cot = if slice.len() < count {
+        slice.len()
+    } else {
+        count
+    };
+    out.drain(0..cot).collect()
+}
+
+pub struct RotBox {
+    pub bounds: BoundingBox,
+    pub rotation: Quaternion,
+    pub position: Vector3,
+}
+pub fn box_points(bx: BoundingBox) -> [Vector3; 8] {
+    [
+        Vector3::new(bx.min.x, bx.min.y, bx.min.z),
+        Vector3::new(bx.min.x, bx.min.y, bx.max.z),
+        Vector3::new(bx.min.x, bx.max.y, bx.min.z),
+        Vector3::new(bx.min.x, bx.max.y, bx.max.z),
+        Vector3::new(bx.max.x, bx.min.y, bx.min.z),
+        Vector3::new(bx.max.x, bx.min.y, bx.max.z),
+        Vector3::new(bx.max.x, bx.max.y, bx.min.z),
+        Vector3::new(bx.max.x, bx.max.y, bx.max.z),
+    ]
+}
+pub fn bound_points(points: [Vector3; 8]) -> BoundingBox {
+    let mut min = points[0];
+    let mut max = points[0];
+    for i in points {
+        if i.x < min.x {
+            min.x = i.x;
         }
-        let mut list = Vec::new();
-        let indes: Vec<GLightId> = scene.lights.keys().copied().collect();
-        for (count, idx) in indes.iter().enumerate() {
-            list.push(self.render_shadows(scene, handle, thread, *idx, count));
+        if i.y < min.y {
+            min.y = i.y;
         }
-        self.render_scene(scene, handle, thread, &list, target);
-        self.to_load.remove("box");
-        for i in &self.to_load {
-            let name = "models/".to_string() + i;
-            let Ok(modl) = handle.load_model(thread, &name) else {
-                continue;
-            };
-            for i in 0..modl.materialCount {
-                unsafe {
-                    (*modl.materials.add(i as usize)).shader = *self.shader.as_deref().unwrap();
+        if i.z < min.z {
+            min.z = i.z;
+        }
+        if i.x > max.x {
+            max.x = i.x;
+        }
+        if i.y > max.y {
+            max.y = i.y;
+        }
+        if i.z > max.z {
+            max.z = i.z;
+        }
+    }
+    BoundingBox::new(min, max)
+}
+impl RotBox {
+    pub fn new(bounds: BoundingBox, rotation: Quaternion, position: Vector3) -> Self {
+        Self {
+            bounds,
+            rotation,
+            position,
+        }
+    }
+
+    pub fn as_points(&self) -> [Vector3; 8] {
+        let mut ps = box_points(self.bounds);
+        for i in &mut ps {
+            i.rotate_by(self.rotation);
+        }
+        for i in &mut ps {
+            *i += self.position;
+        }
+        ps
+    }
+    pub const fn const_normal_vectors() -> [Vector3; 6] {
+        [
+            Vector3::new(0.0, 0.0, 1.0),
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0),
+            Vector3::new(0.0, 0.0, -1.0),
+            Vector3::new(0.0, -1.0, 0.0),
+            Vector3::new(-1.0, 0.0, 0.0),
+        ]
+    }
+
+    pub fn sap_vectors(&self, other: &Self) -> [Vector3; 15] {
+        let base_normals = [
+            Vector3::new(0.0, 0.0, 1.0),
+            Vector3::new(0.0, 1.0, 0.0),
+            Vector3::new(1.0, 0.0, 0.0),
+        ];
+        let svectors = [
+            Vector3::forward().rotate_by(self.rotation),
+            Vector3::left().rotate_by(self.rotation),
+            Vector3::up().rotate_by(self.rotation),
+        ];
+        let ovectors = [
+            Vector3::forward().rotate_by(other.rotation),
+            Vector3::left().rotate_by(other.rotation),
+            Vector3::up().rotate_by(other.rotation),
+        ];
+
+        [
+            base_normals[0].rotate_by(self.rotation),
+            base_normals[1].rotate_by(self.rotation),
+            base_normals[2].rotate_by(self.rotation),
+            base_normals[0].rotate_by(other.rotation),
+            base_normals[1].rotate_by(other.rotation),
+            base_normals[2].rotate_by(other.rotation),
+            svectors[0].cross(ovectors[0]),
+            svectors[0].cross(ovectors[1]),
+            svectors[0].cross(ovectors[2]),
+            svectors[1].cross(ovectors[0]),
+            svectors[1].cross(ovectors[1]),
+            svectors[1].cross(ovectors[2]),
+            svectors[2].cross(ovectors[0]),
+            svectors[2].cross(ovectors[1]),
+            svectors[2].cross(ovectors[2]),
+        ]
+    }
+
+    pub fn distance(&self, other: &Self) -> f32 {
+        let spoints = self.as_points();
+        let opoints = other.as_points();
+        let vecs = self.sap_vectors(other);
+        let mut min_depth = std::f32::INFINITY;
+        for i in vecs {
+            let mut smax = spoints[0].dot(i);
+            let mut smin = spoints[0].dot(i);
+            for j in spoints {
+                let dot = j.dot(i);
+                if dot > smax {
+                    smax = dot;
+                }
+                if dot < smin {
+                    smin = dot;
                 }
             }
-            self.loaded_meshes.insert(i.clone(), modl);
+            let mut omax = opoints[0].dot(i);
+            let mut omin = opoints[0].dot(i);
+            for j in opoints {
+                let dot = j.dot(i);
+                if dot > omax {
+                    omax = dot;
+                }
+                if dot < omin {
+                    omin = dot;
+                }
+            }
+            let d = if smin > omin && smin < omax {
+                intersection(smin, smax, omin, omax)
+            } else if smax > omin && smax < omax {
+                intersection(smin, smax, omin, omax)
+            } else if omin > smin && omin < omax {
+                intersection(smin, smax, omin, omax)
+            } else if omax >= smin && omax <= smax {
+                intersection(smin, smax, omin, omax)
+            } else if omin >= smax {
+                omin - smax
+            } else if smin >= omin {
+                smin - omin
+            } else {
+                todo!()
+            };
+            if d < min_depth {
+                min_depth = d;
+            }
         }
-        self.to_load.clear();
+        min_depth
     }
+
+    pub fn check_collision(&self, other: &Self) -> bool {
+        let spoints = self.as_points();
+        let opoints = other.as_points();
+        let vecs = self.sap_vectors(other);
+        for i in vecs {
+            let mut smax = spoints[0].dot(i);
+            let mut smin = spoints[0].dot(i);
+            for j in spoints {
+                let dot = j.dot(i);
+                if dot > smax {
+                    smax = dot;
+                }
+                if dot < smin {
+                    smin = dot;
+                }
+            }
+            let mut omax = opoints[0].dot(i);
+            let mut omin = opoints[0].dot(i);
+            for j in opoints {
+                let dot = j.dot(i);
+                if dot > omax {
+                    omax = dot;
+                }
+                if dot < omin {
+                    omin = dot;
+                }
+            }
+            if smin > omin && smin < omax {
+            } else if smax > omin && smax < omax {
+            } else if omin > smin && omin < omax {
+            } else if omax >= smin && omax <= smax {
+            } else if omin >= smax {
+                return false;
+            } else if smin >= omin {
+                return false;
+            } else {
+                todo!()
+            };
+        }
+        true
+    }
+
+    pub fn check_collision_normal(&self, other: &Self) -> Option<Vector3> {
+        let spoints = self.as_points();
+        let opoints = other.as_points();
+        let vecs = self.sap_vectors(other);
+        let mut min_depth = std::f32::INFINITY;
+        let mut out = Vector3::zero();
+        for i in vecs {
+            let mut smax = spoints[0].dot(i);
+            let mut smin = spoints[0].dot(i);
+            for j in spoints {
+                let dot = j.dot(i);
+                if dot > smax {
+                    smax = dot;
+                }
+                if dot < smin {
+                    smin = dot;
+                }
+            }
+            let mut omax = opoints[0].dot(i);
+            let mut omin = opoints[0].dot(i);
+            for j in opoints {
+                let dot = j.dot(i);
+                if dot > omax {
+                    omax = dot;
+                }
+                if dot < omin {
+                    omin = dot;
+                }
+            }
+            let d = if smin > omin && smin < omax {
+                intersection(smin, smax, omin, omax)
+            } else if smax > omin && smax < omax {
+                intersection(smin, smax, omin, omax)
+            } else if omin > smin && omin < omax {
+                intersection(smin, smax, omin, omax)
+            } else if omax >= smin && omax <= smax {
+                intersection(smin, smax, omin, omax)
+            } else if omin >= smax {
+                return None;
+            } else if smin >= omin {
+                return None;
+            } else {
+                todo!()
+            };
+            if d < min_depth {
+                min_depth = d;
+                out = i;
+            }
+        }
+        Some(out)
+    }
+
+    pub fn ray_cast(&self, start: Vector3, direction: Vector3) -> Option<f32> {
+        let start = (start - self.position).rotate_by(self.rotation.inverted());
+        let col = self.bounds.get_ray_collision_box(Ray::new(
+            start,
+            direction.rotate_by(self.rotation.inverted()),
+        ));
+        if col.hit { Some(col.distance) } else { None }
+    }
+}
+
+pub fn fmin(a: f32, b: f32) -> f32 {
+    if a < b { a } else { b }
+}
+
+pub fn fmax(a: f32, b: f32) -> f32 {
+    if a > b { a } else { b }
+}
+
+pub fn intersection(amin: f32, amax: f32, bmin: f32, bmax: f32) -> f32 {
+    let damin = fmin((amin - bmin).abs(), (amin - bmax).abs());
+    let damax = fmin((amax - bmin).abs(), (amax - bmax).abs());
+    fmax(damax, damin)
 }

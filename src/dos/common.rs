@@ -322,9 +322,9 @@ impl Pallete {
         i += 1;
         colors[i] = BColor::from_rl_color(Color::DARKRED); //11
         i += 1;
-        colors[i] = BColor::from_rl_color(Color::DARKGREEN); //12
+        colors[i] = BColor::from_rl_color(Color::LIGHTGRAY); //12
         i += 1;
-        colors[i] = BColor::from_rl_color(Color::DARKVIOLET); //13
+        colors[i] = BColor::from_rl_color(Color::DARKGREEN); //13
         i += 1;
         colors[i] = BColor::from_rl_color(Color::VIOLET); //14
         i += 1;

@@ -89,12 +89,11 @@ impl AudIoInner {
     pub fn poll(&mut self) -> Option<Packet> {
         let tmp = self.line.pop_front()?;
         if tmp.from == self.last_from {
-            if tmp.counter != (self.last_sent + 1) % 4_000_000 {
-                if self.last_time.elapsed().as_millis() < 2 {
+            if tmp.counter != (self.last_sent + 1) % 4_000_000
+                && self.last_time.elapsed().as_millis() < 2 {
                     self.line.push_front(tmp);
                     return None;
                 }
-            }
             self.last_from = tmp.from;
             self.last_sent = tmp.counter;
             self.last_time = Instant::now();
@@ -181,6 +180,12 @@ impl AudIoInner {
 #[derive(Clone, Debug)]
 pub struct AudIo {
     inner: Arc<Mutex<AudIoInner>>,
+}
+
+impl Default for AudIo {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AudIo {
@@ -462,7 +467,7 @@ impl VoipServer {
                     break;
                 }
             }
-            if packets.len() == 0 {
+            if packets.is_empty() {
                 continue 'outer;
             }
             packets.sort_by(|i, j| i.time.cmp(&j.time));

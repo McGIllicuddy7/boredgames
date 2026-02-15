@@ -1,15 +1,12 @@
 use raylib::{
     color::Color,
-    math::{Quaternion, Vector3},
+    math::{BoundingBox, Quaternion, Vector3},
 };
 
-use crate::{
-    dos::{
-        DrawCall, SysHandle,
-        scene::{GLight, GObject, Scene},
-        setup,
-    },
-    state::run_text_mode,
+use crate::dos::{
+    DrawCall, SysHandle,
+    scene::{GLight, GObject, Scene},
+    setup,
 };
 
 pub mod dos;
@@ -23,22 +20,23 @@ pub fn main() {
 }
 fn main_func(mut handle: SysHandle) {
     let mut scene = Scene::new();
-    let light_id = scene.create_light(GLight {
-        pos: Vector3::forward(),
-        color: Color::WHITE,
-        direction: -Vector3::forward(),
-        up: Vector3::up(),
-        fov: 90.0,
-        casts_shadows: true,
-    });
+    for i in 0..16 {
+        let _light_id = scene.create_light(GLight::new(
+            Vector3::new(i as f32 * 10.0, 0.0, 0.0),
+            Color::WHITE,
+            40.,
+        ));
+    }
+
     let mesh_id = scene.create_object(GObject {
         model_name: "box".into(),
         position: Vector3::forward() * 15.0,
+        bounds: BoundingBox::new(Vector3::new(-0.5, -0.5, -0.5), Vector3::new(0.5, 0.5, 0.5)),
         rotation: Quaternion::identity(),
     });
-    for i in -2..=2 {
-        for j in -2..=2 {
-            for k in -2..=2 {
+    for i in -4..=4 {
+        for j in -3..3 {
+            for k in -3..=3 {
                 if i == j && j == k && k == 0 {
                     continue;
                 }
@@ -49,6 +47,7 @@ fn main_func(mut handle: SysHandle) {
                         y: j as f32 * 5.0,
                         z: k as f32 * 5.0,
                     },
+                    bounds: BoundingBox::new(Vector3::zero(), Vector3::zero()),
                     rotation: Quaternion::identity(),
                 });
             }
@@ -58,7 +57,7 @@ fn main_func(mut handle: SysHandle) {
     while !handle.should_exit() {
         handle.begin_drawing();
         idx += 1;
-        idx = idx % 6290;
+        idx %= 6290;
         let x = scene.get_object_mut(mesh_id).unwrap();
         x.position.x = 4.0 * (idx as f32 / 100.0).cos();
         x.position.z = 4.0 * (idx as f32 / 100.0).sin();

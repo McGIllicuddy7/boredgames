@@ -418,7 +418,6 @@ impl DosRt {
         }
         drop(draw);
         to_load.dedup();
-
         for i in to_load {
             if self.dos.loaded_textures.contains_key(&i) {
                 continue;
