@@ -1058,7 +1058,9 @@ impl BSPTreeNode {
                 let d1 = b1.min.distance_to(b1.max);
                 let c2 = (b2.min + b2.max) * 0.5;
                 let d2 = b2.min.distance_to(b2.max);
-                let l = if (c1 - start).normalized().dot(direction) > 0.0 || d1 > 20.0 {
+                let l = if (c1 - start).normalized().dot(direction) > 0.0
+                    || b1.check_collision_box_sphere(start, 10.0)
+                {
                     left.get_ray_cast_able(start, direction)
                 } else {
                     if left.is_leaf() {
@@ -1067,7 +1069,9 @@ impl BSPTreeNode {
                         Vec::new()
                     }
                 };
-                let r = if (c2 - start).normalized().dot(direction) > 0.0 || d2 > 20.0 {
+                let r = if (c2 - start).normalized().dot(direction) > 0.0
+                    || b2.check_collision_box_sphere(start, 10.0)
+                {
                     right.get_ray_cast_able(start, direction)
                 } else {
                     if right.is_leaf() {
