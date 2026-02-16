@@ -786,7 +786,7 @@ impl BSPTree {
     ) -> Option<(f32, GObjectId, GObject)> {
         let to_check = self.children.get_ray_cast_able(start, direction);
         //let to_check = self.children.get_within_radius(start, 20.0, self.bounds);
-        //let to_check = self.objects.clone();
+        // let to_check = self.objects.clone();
         let mut min_idx = -1;
         let mut min_dist = 100000.0;
         for (indx, i) in to_check.iter().enumerate() {
@@ -979,7 +979,7 @@ impl BSPTreeNode {
                 left,
                 right,
                 seperator,
-                bounds,
+                bounds: _,
                 axis,
             } => {
                 let (b1, b2) = match *axis {
@@ -1055,12 +1055,10 @@ impl BSPTreeNode {
             } => {
                 let (b1, b2) = (left.get_bounds(), right.get_bounds());
                 let c1 = (b1.min + b1.max) * 0.5;
-                let d1 = b1.min.distance_to(b1.max);
+                //let d1 = b1.min.distance_to(b1.max);
                 let c2 = (b2.min + b2.max) * 0.5;
-                let d2 = b2.min.distance_to(b2.max);
-                let l = if (c1 - start).normalized().dot(direction) > 0.0
-                    || b1.check_collision_box_sphere(start, 10.0)
-                {
+                //let d2 = b2.min.distance_to(b2.max);
+                let l = if (c1 - start).normalized().dot(direction) > 0.5 {
                     left.get_ray_cast_able(start, direction)
                 } else {
                     if left.is_leaf() {
@@ -1069,9 +1067,7 @@ impl BSPTreeNode {
                         Vec::new()
                     }
                 };
-                let r = if (c2 - start).normalized().dot(direction) > 0.0
-                    || b2.check_collision_box_sphere(start, 10.0)
-                {
+                let r = if (c2 - start).normalized().dot(direction) > 0.5 {
                     right.get_ray_cast_able(start, direction)
                 } else {
                     if right.is_leaf() {

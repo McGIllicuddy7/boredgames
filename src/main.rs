@@ -34,7 +34,7 @@ fn main_func(mut handle: SysHandle) {
         bounds: BoundingBox::new(Vector3::new(-0.5, -0.5, -0.5), Vector3::new(0.5, 0.5, 0.5)),
         rotation: Quaternion::identity(),
     });
-    let count = 4;
+    let count = 2;
     for i in -count..=count {
         for j in -count..count {
             for k in -count..=count {
