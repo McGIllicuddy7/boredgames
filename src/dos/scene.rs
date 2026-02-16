@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::dos::SysHandle;
+use crate::dos::{SysHandle, scene};
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct GObject {
     pub model_name: Arc<str>,
@@ -29,28 +29,25 @@ pub struct GLight {
     pub radius: f32,
     pub bounds: Vector3,
     pub enabled: i32,
-    pub distances: [f32; 16],
+    pub distances: [f32; DIRECTION_COUNT],
 }
 
-pub fn cardinals() -> [Vector3; 16] {
-    [
-        Vector3::new(0.0, 0.0, 1.0).normalized(),
-        Vector3::new(0.0, 1.0, 0.0).normalized(),
-        Vector3::new(0.0, 1.0, 1.0).normalized(),
-        Vector3::new(1.0, 0.0, 0.0).normalized(),
-        Vector3::new(1.0, 0.0, 1.0).normalized(),
-        Vector3::new(1.0, 1.0, 0.0).normalized(),
-        Vector3::new(1.0, 1.0, 1.0).normalized(),
-        Vector3::new(0.0, 1.0, -1.0).normalized(),
-        Vector3::new(1.0, 0.0, -1.0).normalized(),
-        Vector3::new(1.0, -1.0, 0.0).normalized(),
-        Vector3::new(0.0, -1.0, 1.0).normalized(),
-        Vector3::new(-1.0, 0.0, 1.0).normalized(),
-        Vector3::new(-1.0, 1.0, 0.0).normalized(),
-        Vector3::new(0.0, -1.0, -1.0).normalized(),
-        Vector3::new(-1.0, 0.0, -1.0).normalized(),
-        Vector3::new(-1.0, -1.0, 0.0).normalized(),
-    ]
+pub const DIRECTION_COUNT: usize = 26;
+pub fn cardinals() -> [Vector3; DIRECTION_COUNT] {
+    let mut out = [Vector3::zero(); DIRECTION_COUNT];
+    let mut idx = 0;
+    for i in -1..=1 {
+        for j in -1..=1 {
+            for k in -1..=1 {
+                if i == 0 && j == 0 && k == 0 {
+                    continue;
+                }
+                out[idx] = Vector3::new(i as f32, j as f32, k as f32).normalized();
+                idx += 1;
+            }
+        }
+    }
+    out
 }
 #[derive(Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
 pub struct GLightId {
@@ -102,7 +99,7 @@ impl GLight {
                 z: radius * 2.,
             },
             enabled: 1,
-            distances: [radius; 16],
+            distances: [radius; 26],
         }
     }
 
@@ -117,7 +114,7 @@ impl GLight {
                 z: 0.,
             },
             enabled: 0,
-            distances: [0.0; 16],
+            distances: [0.0; 26],
         }
     }
 }
@@ -143,7 +140,7 @@ impl Scene {
             cam_rot: Quaternion::new(1.0, 0.0, 0.0, 0.0),
             objects: BTreeMap::new(),
             lights: BTreeMap::new(),
-            f_debug_lights: false,
+            f_debug_lights: true,
         }
     }
 
@@ -281,6 +278,7 @@ impl SceneRenderer {
         handle: &mut RaylibHandle,
         thread: &RaylibThread,
     ) {
+        let mut scene = scene.clone();
         let directions = cardinals();
         if self.shader.is_none() {
             self.shader = Some(handle.load_shader(
@@ -296,6 +294,13 @@ impl SceneRenderer {
             unsafe { (*msh.materials).shader = **self.shader.as_ref().unwrap() };
             self.loaded_meshes.insert("box".into(), msh);
         }
+        for i in &mut scene.objects {
+            if let Some(msh) = self.loaded_meshes.get(&i.1.model_name) {
+                if i.1.bounds == BoundingBox::new(Vector3::zero(), Vector3::zero()) {
+                    i.1.bounds = msh.get_model_bounding_box();
+                }
+            }
+        }
         let shade = self.shader.as_mut().unwrap();
         let pos_loc = shade.get_shader_location("lightPositions");
         let col_loc = shade.get_shader_location("lightColors");
@@ -310,35 +315,33 @@ impl SceneRenderer {
             &lights,
             16,
         );
-
+        let tree = BSPTree::from_objects(&mut scene.objects.iter());
         for i in &mut nearest_set {
             let pos = i.pos;
             for (idx, j) in directions.iter().enumerate() {
                 let ray_dir = *j;
-                let mut min_dist = i.radius;
-                for (_, obj) in &scene.objects {
-                    let col = RotBox::new(obj.bounds, obj.rotation, obj.position);
-                    if let Some(dist) = col.ray_cast(pos, ray_dir) {
-                        if dist < min_dist {
-                            min_dist = dist;
-                        }
+                let mut min_dist = 20.0;
+                if let Some((dist, _, _)) = tree.ray_cast(pos, ray_dir) {
+                    if dist < min_dist {
+                        min_dist = dist;
                     }
                 }
                 i.distances[idx] = min_dist;
             }
         }
+
         let mut positions = [Vector3::zero(); 16];
         let mut colors = [Vector4::new(0.0, 0.0, 0.0, 0.0); 16];
         let mut radii = [0.0; 16];
         let mut enabled = [0; 16];
-        let mut distances = [0.0; 256];
+        let mut distances = [0.0; 16 * DIRECTION_COUNT];
         for i in nearest_set.iter().enumerate() {
             positions[i.0] = i.1.pos;
             colors[i.0] = i.1.color;
             radii[i.0] = i.1.radius;
             enabled[i.0] = i.1.enabled;
-            for j in 0..16 {
-                distances[i.0 * 16 + j] = i.1.distances[j];
+            for j in 0..DIRECTION_COUNT {
+                distances[i.0 * DIRECTION_COUNT + j] = i.1.distances[j];
             }
         }
         shade.set_shader_value_v(pos_loc, &positions);
@@ -378,7 +381,7 @@ impl SceneRenderer {
             let directions = cardinals();
             for (_, i) in scene.lights.iter() {
                 for (idx, j) in i.distances.iter().enumerate() {
-                    draw.draw_line_3D(i.pos, i.pos + directions[idx] * *j, Color::RED);
+                    draw.draw_line_3D(i.pos, i.pos + directions[idx] * (*j), Color::RED);
                 }
             }
         }
@@ -675,12 +678,17 @@ impl RotBox {
     }
 
     pub fn ray_cast(&self, start: Vector3, direction: Vector3) -> Option<f32> {
-        let start = (start - self.position).rotate_by(self.rotation.inverted());
+        let old_start = start;
+        let start = (start - self.position).rotate_by(self.rotation);
         let col = self.bounds.get_ray_collision_box(Ray::new(
             start,
             direction.rotate_by(self.rotation.inverted()),
         ));
-        if col.hit { Some(col.distance) } else { None }
+        if col.hit {
+            Some(old_start.distance_to(self.position))
+        } else {
+            None
+        }
     }
 }
 
@@ -696,4 +704,395 @@ pub fn intersection(amin: f32, amax: f32, bmin: f32, bmax: f32) -> f32 {
     let damin = fmin((amin - bmin).abs(), (amin - bmax).abs());
     let damax = fmin((amax - bmin).abs(), (amax - bmax).abs());
     fmax(damax, damin)
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Axis {
+    X,
+    Y,
+    Z,
+}
+
+#[derive(Debug)]
+pub enum BSPTreeNode {
+    Leaf((GObjectId, GObject)),
+    Branch {
+        left: Box<BSPTreeNode>,  //less than seperator
+        right: Box<BSPTreeNode>, //greater than seperator
+        seperator: f32,
+        bounds: BoundingBox,
+        axis: Axis,
+    },
+    Empty,
+}
+
+pub fn bound_set<'a, T: Iterator<Item = &'a GObject>>(mut it: T) -> BoundingBox {
+    if let Some(base) = it.next() {
+        let mut min = base.position;
+        let mut max = base.position;
+        for i in it {
+            if i.position.x > max.x {
+                max.x = i.position.x;
+            }
+            if i.position.x < min.x {
+                min.x = i.position.x;
+            }
+            if i.position.y > max.y {
+                max.y = i.position.y;
+            }
+            if i.position.y < min.y {
+                min.y = i.position.y;
+            }
+            if i.position.z > max.z {
+                max.z = i.position.z;
+            }
+            if i.position.z < min.z {
+                min.z = i.position.z;
+            }
+        }
+        BoundingBox { min, max }
+    } else {
+        BoundingBox {
+            min: Vector3::zero(),
+            max: Vector3::zero(),
+        }
+    }
+}
+pub struct BSPTree {
+    pub children: BSPTreeNode,
+    pub bounds: BoundingBox,
+    pub objects: Vec<(GObjectId, GObject)>,
+}
+
+impl BSPTree {
+    pub fn from_objects<'b>(
+        objects: &mut impl Iterator<Item = (&'b GObjectId, &'b GObject)>,
+    ) -> Self {
+        let mut objects: Vec<(GObjectId, GObject)> =
+            objects.map(|(i, j)| (*i, j.clone())).collect();
+        let node = BSPTreeNode::new(&mut objects, Axis::X);
+        let bounds = bound_set(objects.iter().map(|i| &i.1));
+        Self {
+            children: node,
+            bounds,
+            objects,
+        }
+    }
+
+    pub fn ray_cast(
+        &self,
+        start: Vector3,
+        direction: Vector3,
+    ) -> Option<(f32, GObjectId, GObject)> {
+        // let to_check = self.children.get_ray_cast_able(start, direction);
+        //let to_check = self.children.get_within_radius(start, 20.0, self.bounds);
+        let to_check = self.objects.clone();
+        let mut min_idx = -1;
+        let mut min_dist = 100000.0;
+        for (indx, i) in to_check.iter().enumerate() {
+            let rot = RotBox::new(i.1.bounds, i.1.rotation, i.1.position);
+            let cast = rot.ray_cast(start, direction);
+            if let Some(c) = cast {
+                if c < min_dist {
+                    min_idx = indx as i32;
+                    min_dist = c;
+                }
+            }
+        }
+        if min_idx != -1 {
+            let (id, obj) = to_check[min_idx as usize].clone();
+            Some((min_dist, id, obj))
+        } else {
+            None
+        }
+    }
+}
+
+impl BSPTreeNode {
+    pub fn new(objects: &mut [(GObjectId, GObject)], axis: Axis) -> Self {
+        if objects.is_empty() {
+            Self::Empty
+        } else if objects.len() == 1 {
+            Self::Leaf(objects[0].clone())
+        } else {
+            objects.sort_by(|x, y| match axis {
+                Axis::X => {
+                    if x.1.position.x > y.1.position.x {
+                        std::cmp::Ordering::Greater
+                    } else if x.1.position.x == y.1.position.x {
+                        std::cmp::Ordering::Equal
+                    } else {
+                        std::cmp::Ordering::Greater
+                    }
+                }
+                Axis::Y => {
+                    if x.1.position.y > y.1.position.y {
+                        std::cmp::Ordering::Greater
+                    } else if x.1.position.y == y.1.position.y {
+                        std::cmp::Ordering::Equal
+                    } else {
+                        std::cmp::Ordering::Greater
+                    }
+                }
+                Axis::Z => {
+                    if x.1.position.z > y.1.position.z {
+                        std::cmp::Ordering::Greater
+                    } else if x.1.position.z == y.1.position.z {
+                        std::cmp::Ordering::Equal
+                    } else {
+                        std::cmp::Ordering::Greater
+                    }
+                }
+            });
+            let seperator = match axis {
+                Axis::X => objects[objects.len() / 2].1.position.x,
+                Axis::Y => objects[objects.len() / 2].1.position.y,
+                Axis::Z => objects[objects.len() / 2].1.position.z,
+            };
+            let bounds = bound_set(objects.iter().map(|(i, j)| j));
+
+            /*  let (lbounds, rbounds) = match axis {
+                Axis::X => {
+                    let mut lbounds = bounds;
+                    let mut rbounds = bounds;
+                    lbounds.max.x = seperator;
+                    rbounds.min.x = seperator;
+                    (lbounds, rbounds)
+                }
+                Axis::Y => {
+                    let mut lbounds = bounds;
+                    let mut rbounds = bounds;
+                    lbounds.max.y = seperator;
+                    rbounds.min.y = seperator;
+                    (lbounds, rbounds)
+                }
+                Axis::Z => {
+                    let mut lbounds = bounds;
+                    let mut rbounds = bounds;
+                    lbounds.max.z = seperator;
+                    rbounds.min.z = seperator;
+                    (lbounds, rbounds)
+                }
+            };
+             let mut a = Vec::new();
+            let mut b = Vec::new();
+               let bounds = bound_set(objects.iter().map(|i| &i.1));
+            let mut idx = 0;
+            for i in objects {
+                if i.1.bounds.min == i.1.bounds.max {
+                    idx += 1;
+                    continue;
+                }
+                let bx =
+                    BoundingBox::new(i.1.bounds.min + i.1.position, i.1.bounds.max + i.1.position);
+                let lcol = bx.check_collision_boxes(lbounds);
+                let rcol = bx.check_collision_boxes(rbounds);
+
+                if lcol && !rcol {
+                    a.push(i.clone());
+                } else if rcol && !lcol {
+                    b.push(i.clone());
+                } else if idx % 2 == 0 {
+                    idx += 1;
+                    a.push(i.clone())
+                } else {
+                    idx += 1;
+                    b.push(i.clone());
+                }
+            }*/
+            let (a, b) = objects.split_at_mut(objects.len() / 2);
+            let old_axis = axis;
+            let axis = match axis {
+                Axis::X => Axis::Y,
+                Axis::Y => Axis::Z,
+                Axis::Z => Axis::X,
+            };
+            //println!("{:#?}, {:#?}, {:#?}, {:#?}", a, b, lbounds, rbounds);
+            let left = Box::new(BSPTreeNode::new(a, axis));
+            let right = Box::new(BSPTreeNode::new(b, axis));
+            Self::Branch {
+                left,
+                right,
+                seperator,
+                bounds,
+                axis: old_axis,
+            }
+        }
+    }
+
+    pub fn get_objects(&self) -> Vec<(GObjectId, GObject)> {
+        let mut out = Vec::new();
+        match self {
+            BSPTreeNode::Leaf(x) => {
+                out.push(x.clone());
+            }
+            BSPTreeNode::Branch {
+                left,
+                right,
+                seperator: _,
+                bounds: _,
+                axis: _,
+            } => {
+                let l = left.get_objects();
+                let r = right.get_objects();
+                for i in l {
+                    out.push(i);
+                }
+                for i in r {
+                    out.push(i);
+                }
+            }
+            BSPTreeNode::Empty => {}
+        }
+        out
+    }
+    pub fn get_bounds(&self) -> BoundingBox {
+        match self {
+            BSPTreeNode::Leaf(x) => BoundingBox::new(
+                x.1.bounds.min * 2.0 + x.1.position,
+                x.1.bounds.max * 2.0 + x.1.position,
+            ),
+            BSPTreeNode::Branch {
+                left: _,
+                right: _,
+                seperator: _,
+                bounds,
+                axis: _,
+            } => *bounds,
+            BSPTreeNode::Empty => BoundingBox::new(Vector3::zero(), Vector3::zero()),
+        }
+    }
+    pub fn get_within_radius(
+        &self,
+        pos: Vector3,
+        rad: f32,
+        boundary: BoundingBox,
+    ) -> Vec<(GObjectId, GObject)> {
+        let mut out = Vec::new();
+        match self {
+            BSPTreeNode::Leaf(x) => {
+                if x.1.position.distance_to(pos) < rad {
+                    out.push(x.clone());
+                }
+            }
+            BSPTreeNode::Branch {
+                left,
+                right,
+                seperator,
+                bounds,
+                axis,
+            } => {
+                let (b1, b2) = match *axis {
+                    Axis::X => {
+                        let (mut b1, mut b2) = (boundary, boundary);
+                        b1.max.x = *seperator;
+                        b2.min.x = *seperator;
+                        (b1, b2)
+                    }
+                    Axis::Y => {
+                        let (mut b1, mut b2) = (boundary, boundary);
+                        b1.max.y = *seperator;
+                        b2.min.y = *seperator;
+                        (b1, b2)
+                    }
+                    Axis::Z => {
+                        let (mut b1, mut b2) = (boundary, boundary);
+                        b1.max.z = *seperator;
+                        b2.min.z = *seperator;
+                        (b1, b2)
+                    }
+                };
+                let l = if b1.check_collision_box_sphere(pos, rad) {
+                    left.get_within_radius(pos, rad, b1)
+                } else {
+                    Vec::new()
+                };
+                let r = if b2.check_collision_box_sphere(pos, rad) {
+                    right.get_within_radius(pos, rad, b2)
+                } else {
+                    Vec::new()
+                };
+                for i in l {
+                    out.push(i);
+                }
+                for i in r {
+                    out.push(i);
+                }
+            }
+            BSPTreeNode::Empty => {}
+        }
+        out
+    }
+    pub fn is_leaf(&self) -> bool {
+        match self {
+            Self::Leaf(_) => true,
+            Self::Branch {
+                left: _,
+                right: _,
+                seperator: _,
+                bounds: _,
+                axis: _,
+            }
+            | Self::Empty => false,
+        }
+    }
+    pub fn get_ray_cast_able(
+        &self,
+        start: Vector3,
+        direction: Vector3,
+    ) -> Vec<(GObjectId, GObject)> {
+        let mut out = Vec::new();
+        match self {
+            BSPTreeNode::Leaf(x) => {
+                out.push(x.clone());
+            }
+            BSPTreeNode::Branch {
+                left,
+                right,
+                seperator: _,
+                axis: _,
+                bounds: _,
+            } => {
+                let (b1, b2) = (left.get_bounds(), right.get_bounds());
+                let l = if b1
+                    .get_ray_collision_box(Ray {
+                        position: start,
+                        direction,
+                    })
+                    .hit
+                {
+                    left.get_ray_cast_able(start, direction)
+                } else {
+                    if left.is_leaf() {
+                        left.get_objects()
+                    } else {
+                        Vec::new()
+                    }
+                };
+                let r = if b2
+                    .get_ray_collision_box(Ray {
+                        position: start,
+                        direction,
+                    })
+                    .hit
+                {
+                    right.get_ray_cast_able(start, direction)
+                } else {
+                    if right.is_leaf() {
+                        right.get_objects()
+                    } else {
+                        Vec::new()
+                    }
+                };
+                for i in l {
+                    out.push(i);
+                }
+                for i in r {
+                    out.push(i);
+                }
+            }
+            BSPTreeNode::Empty => {}
+        }
+        out
+    }
 }

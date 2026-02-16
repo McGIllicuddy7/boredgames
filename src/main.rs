@@ -20,32 +20,33 @@ pub fn main() {
 }
 fn main_func(mut handle: SysHandle) {
     let mut scene = Scene::new();
-    for i in 0..16 {
+    for i in 0..1 {
         let _light_id = scene.create_light(GLight::new(
             Vector3::new(i as f32 * 10.0, 0.0, 0.0),
             Color::WHITE,
-            10.,
+            30.,
         ));
     }
 
     let mesh_id = scene.create_object(GObject {
         model_name: "box".into(),
-        position: Vector3::forward() * 15.0,
+        position: Vector3::forward() * 10.0,
         bounds: BoundingBox::new(Vector3::new(-0.5, -0.5, -0.5), Vector3::new(0.5, 0.5, 0.5)),
         rotation: Quaternion::identity(),
     });
-    for i in -5..=5 {
-        for j in -5..5 {
-            for k in -5..=5 {
+    let count = 2;
+    for i in -count..=count {
+        for j in -count..count {
+            for k in -count..=count {
                 if i == j && j == k && k == 0 {
                     continue;
                 }
                 scene.create_object(GObject {
                     model_name: "box".into(),
                     position: Vector3 {
-                        x: i as f32 * 5.0,
-                        y: j as f32 * 5.0,
-                        z: k as f32 * 5.0,
+                        x: i as f32 * 10.0,
+                        y: j as f32 * 10.0,
+                        z: k as f32 * 10.0,
                     },
                     bounds: BoundingBox::new(Vector3::zero(), Vector3::zero()),
                     rotation: Quaternion::identity(),
