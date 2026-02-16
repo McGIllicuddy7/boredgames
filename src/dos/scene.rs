@@ -784,9 +784,9 @@ impl BSPTree {
         start: Vector3,
         direction: Vector3,
     ) -> Option<(f32, GObjectId, GObject)> {
-        // let to_check = self.children.get_ray_cast_able(start, direction);
+        let to_check = self.children.get_ray_cast_able(start, direction);
         //let to_check = self.children.get_within_radius(start, 20.0, self.bounds);
-        let to_check = self.objects.clone();
+        //let to_check = self.objects.clone();
         let mut min_idx = -1;
         let mut min_dist = 100000.0;
         for (indx, i) in to_check.iter().enumerate() {
@@ -1054,13 +1054,11 @@ impl BSPTreeNode {
                 bounds: _,
             } => {
                 let (b1, b2) = (left.get_bounds(), right.get_bounds());
-                let l = if b1
-                    .get_ray_collision_box(Ray {
-                        position: start,
-                        direction,
-                    })
-                    .hit
-                {
+                let c1 = (b1.min + b1.max) * 0.5;
+                let d1 = b1.min.distance_to(b1.max);
+                let c2 = (b2.min + b2.max) * 0.5;
+                let d2 = b2.min.distance_to(b2.max);
+                let l = if (c1 - start).normalized().dot(direction) > 0.0 || d1 > 20.0 {
                     left.get_ray_cast_able(start, direction)
                 } else {
                     if left.is_leaf() {
@@ -1069,13 +1067,7 @@ impl BSPTreeNode {
                         Vec::new()
                     }
                 };
-                let r = if b2
-                    .get_ray_collision_box(Ray {
-                        position: start,
-                        direction,
-                    })
-                    .hit
-                {
+                let r = if (c2 - start).normalized().dot(direction) > 0.0 || d2 > 20.0 {
                     right.get_ray_cast_able(start, direction)
                 } else {
                     if right.is_leaf() {
