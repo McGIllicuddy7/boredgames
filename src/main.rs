@@ -44,9 +44,9 @@ fn main_func(mut handle: SysHandle) {
                 scene.create_object(GObject {
                     model_name: "box".into(),
                     position: Vector3 {
-                        x: i as f32 * 10.0,
-                        y: j as f32 * 10.0,
-                        z: k as f32 * 10.0,
+                        x: i as f32 * 5.0,
+                        y: j as f32 * 5.0,
+                        z: k as f32 * 5.0,
                     },
                     bounds: BoundingBox::new(Vector3::zero(), Vector3::zero()),
                     rotation: Quaternion::identity(),
