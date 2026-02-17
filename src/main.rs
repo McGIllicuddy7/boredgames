@@ -11,9 +11,9 @@ pub fn testing123() -> i32 {
 }
 global!(x:i32 = testing123());
 pub fn main() {
-    println!("{}", x.load());
-    x.store(32);
-    println!("{}", x.load());
+    if std::env::args().len() > 1 {
+        state::run_text_mode();
+    }
     setup(main_func);
 }
 pub fn main_func(mut handle: SysHandle) {

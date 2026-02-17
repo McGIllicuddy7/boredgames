@@ -209,7 +209,7 @@ impl Input {
         }
     }
 }
-pub fn generate_input(handle: &mut RaylibHandle) -> Input {
+pub fn generate_input(handle: &mut RaylibHandle, rat_x: f64, rat_y: f64) -> Input {
     let mut out = HashMap::new();
     out.reserve(107);
     handle_key!(handle, KEY_NULL, out);
@@ -331,10 +331,10 @@ pub fn generate_input(handle: &mut RaylibHandle) -> Input {
     Input {
         codes: out,
         mouse: out2,
-        mouse_x: handle.get_mouse_x(),
-        mouse_y: handle.get_mouse_y(),
-        mouse_dx: handle.get_mouse_delta().x,
-        mouse_dy: handle.get_mouse_delta().y,
+        mouse_x: (handle.get_mouse_x() as f32 / rat_x as f32) as i32,
+        mouse_y: (handle.get_mouse_y() as f32 / rat_y as f32) as i32,
+        mouse_dx: handle.get_mouse_delta().x / rat_x as f32,
+        mouse_dy: handle.get_mouse_delta().y / rat_y as f32,
         scroll_amount: handle.get_mouse_wheel_move(),
     }
 }

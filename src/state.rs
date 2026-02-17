@@ -42,7 +42,7 @@ pub struct UserMessage {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ServerState {
     pub messages_start: u64,
-    pub messages: VecDeque<Message>,
+    pub messages: VecDeque<UserMessage>,
     pub users: HashMap<GlobalId, String>,
     pub map: TileMap,
     pub name: String,
@@ -179,7 +179,7 @@ impl ServerState {
                 w,
                 layer,
                 h,
-                name: _,
+                name,
             } => {
                 let img = self.map.get_image_id(&image);
                 let img = if img.is_some() {
@@ -188,6 +188,9 @@ impl ServerState {
                     self.map.load_image(&image)
                 };
                 self.map.create_sprite_with_id(id, x, y, w, h, img, layer);
+                let mut s = self.map.get_sprite(id);
+                s.display_name = name.into();
+                self.map.set_sprite(id, s);
             }
             MapUpdate::DestroySprite { id } => {
                 self.alloc.free_id(GlobalId::create(id));
@@ -266,7 +269,7 @@ impl ServerState {
             } => {
                 println!("id:{:#?}", user_id);
                 for i in &state.messages {
-                    Self::print_message(i);
+                    Self::print_message(&Message::SendMessage(i.clone()));
                 }
                 println!("{:#?}", allocator_base);
             }
@@ -579,6 +582,7 @@ impl ServerState {
                         let image = img.to_string();
                         let id = self.alloc.alloc_id();
                         let img_id = self.map.get_image_id(img);
+                        let name = if let Some(n) = s.next() { n } else { "" };
                         let img = if let Some(img_id) = img_id {
                             img_id
                         } else {
@@ -593,6 +597,9 @@ impl ServerState {
                             img,
                             self.current_layer,
                         );
+                        let mut tmp = self.map.get_sprite(id.get());
+                        tmp.display_name = name.into();
+                        self.map.set_sprite(id.get(), tmp);
                         let msg = Message::UpdateMap {
                             update: MapUpdate::CreateSprite {
                                 id: id.get(),
@@ -602,7 +609,7 @@ impl ServerState {
                                 y,
                                 w: 1,
                                 h: 1,
-                                name: String::new(),
+                                name: name.to_string(),
                             },
                         };
                         connection.send(msg).unwrap();
@@ -814,13 +821,16 @@ impl ServerState {
                 }
             }
         } else {
-            let Ok(_) = connection.send(Message::SendMessage(UserMessage {
+            let m = UserMessage {
                 timestamp: std::time::UNIX_EPOCH.elapsed().unwrap().as_secs(),
                 user_name: self.name.clone(),
                 contents: MessageContents::Text {
                     contents: cmd.into(),
                 },
-            })) else {
+            };
+            let msg = Message::SendMessage(m.clone());
+            self.messages.push_back(m);
+            let Ok(_) = connection.send(msg) else {
                 println!("failed to send");
                 return;
             };
@@ -926,13 +936,14 @@ pub fn run_server(port: String, in_stream: BStream<Message>) {
         users: HashMap::new(),
         name: "host".to_string(),
         id: gal.alloc_id(),
-        map: TileMap::new(100, 100, "bg.png".to_string(), Vec::new()),
+        map: TileMap::new(20, 20, "bg.png".to_string(), Vec::new()),
         current_layer: TILE_LAYER,
         alloc: Arc::new(IdAllocator::new(0)),
     };
     let mut new_connections = Vec::new();
     new_connections.push(in_stream);
     let mut page = Vec::new();
+    let mut recieved = false;
     loop {
         while let Ok(Some(x)) = rec.recieve() {
             new_connections.push(BStream::from_stream(x));
@@ -971,7 +982,6 @@ pub fn run_server(port: String, in_stream: BStream<Message>) {
         }
         new_connections = Vec::new();
         for (from, msg) in messages {
-            state.messages.push_back(msg.clone());
             match &msg {
                 Message::Disconnect { username: _, id } => {
                     println!("dced");
@@ -1014,9 +1024,13 @@ pub fn run_server(port: String, in_stream: BStream<Message>) {
                         );
                     }
                 }
+                Message::SendMessage(m) => {
+                    state.messages.push_back(m.clone());
+                }
                 _ => {}
             }
             for (id, user) in &mut connections {
+                recieved = true;
                 if *id != from {
                     user.connection.send(msg.clone()).unwrap();
                 }
@@ -1037,7 +1051,7 @@ pub fn run_server(port: String, in_stream: BStream<Message>) {
                 page.clear();
             }
         }
-        if connections.is_empty() {
+        if connections.is_empty() && recieved {
             break;
         }
     }

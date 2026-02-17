@@ -278,7 +278,11 @@ impl DosRt {
         if handle.is_key_pressed(KeyboardKey::KEY_ENTER) {
             self.input.pressed_keys.push('\n');
         }
-        self.input.input = super::input::generate_input(handle);
+        self.input.input = super::input::generate_input(
+            handle,
+            self.dos.w as f64 / handle.get_screen_width() as f64,
+            self.dos.h as f64 / handle.get_screen_height() as f64,
+        );
         self.cmd_pipeline
             .send(DrawCall::Update {
                 input: self.input.clone(),

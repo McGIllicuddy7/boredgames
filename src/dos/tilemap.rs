@@ -351,7 +351,7 @@ impl TileMap {
                 if sprite.layer as usize != i {
                     continue;
                 }
-                if self.selected.map(|i| i == *id).unwrap_or(false) {
+                if self.selected.map(|i| i != *id).unwrap_or(false) {
                     continue;
                 };
                 let px = (sprite.x_pos as i32 - start_x) as f64 * xshift;
