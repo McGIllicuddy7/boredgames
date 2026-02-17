@@ -6,7 +6,7 @@
 
 // Input vertex attributes (from vertex shader)
 
-const int directionCount = 16;
+const int directionCount = 19;
 in vec3 fragPosition;
 in vec2 fragTexCoord;
 // in vec4 fragColor;
@@ -24,14 +24,14 @@ uniform vec3 lightPositions[16];
 uniform vec4 lightColors[16];
 uniform float lightRadii[16];
 uniform int lightEnabled[16];
-uniform float lightDistances[16 * 26];
-uniform vec3 directions[26];
+uniform float lightDistances[16 * 19];
+uniform vec3 directions[19];
 struct Light {
   vec3 pos;
   vec4 col;
   float radius;
   int enabled;
-  float distances[26];
+  float distances[19];
 };
 
 Light get_light(int idx) {
@@ -40,8 +40,8 @@ Light get_light(int idx) {
   ot.col = lightColors[idx];
   ot.radius = lightRadii[idx];
   ot.enabled = lightEnabled[idx];
-  for (int i = 0; i < 26; i++) {
-    ot.distances[i] = lightDistances[idx * 26 + i];
+  for (int i = 0; i < 19; i++) {
+    ot.distances[i] = lightDistances[idx * 19 + i];
   }
   return ot;
 }
@@ -57,7 +57,7 @@ vec4 handle_light(int idx) {
     return vec4(0.0, 0.0, 0.0, 1.0);
   }
   vec3 ndisp = disp / dist;
-  for (int i = 0; i < 26; i++) {
+  for (int i = 0; i < 19; i++) {
     if (dot(-ndisp, directions[i]) > 0.8) {
       if (dist > l.distances[i]) {
         return vec4(0.0, 0.0, 0.0, 1.0);

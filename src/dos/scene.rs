@@ -32,16 +32,25 @@ pub struct GLight {
     pub distances: [f32; DIRECTION_COUNT],
 }
 
-pub const DIRECTION_COUNT: usize = 26;
+pub const DIRECTION_COUNT: usize = 19;
 pub fn cardinals() -> [Vector3; DIRECTION_COUNT] {
     let mut out = [Vector3::zero(); DIRECTION_COUNT];
     let mut idx = 0;
     for i in -1..=1 {
         for j in -1..=1 {
             for k in -1..=1 {
-                if i == 0 && j == 0 && k == 0 {
+                let mut zero_count = 0;
+                if i == 0 {
+                    zero_count += 1;
+                } else if j == 0 {
+                    zero_count += 1;
+                } else if k == 0 {
+                    zero_count += 1;
+                }
+                if zero_count == 3 || zero_count == 0 {
                     continue;
                 }
+
                 out[idx] = Vector3::new(i as f32, j as f32, k as f32).normalized();
                 idx += 1;
             }
@@ -99,7 +108,7 @@ impl GLight {
                 z: radius * 2.,
             },
             enabled: 1,
-            distances: [radius; 26],
+            distances: [radius; DIRECTION_COUNT],
         }
     }
 
@@ -114,7 +123,7 @@ impl GLight {
                 z: 0.,
             },
             enabled: 0,
-            distances: [0.0; 26],
+            distances: [0.0; DIRECTION_COUNT],
         }
     }
 }
@@ -784,9 +793,9 @@ impl BSPTree {
         start: Vector3,
         direction: Vector3,
     ) -> Option<(f32, GObjectId, GObject)> {
-        let to_check = self.children.get_ray_cast_able(start, direction);
+        //let to_check = self.children.get_ray_cast_able(start, direction);
         //let to_check = self.children.get_within_radius(start, 20.0, self.bounds);
-        // let to_check = self.objects.clone();
+        let to_check = self.objects.clone();
         let mut min_idx = -1;
         let mut min_dist = 100000.0;
         for (indx, i) in to_check.iter().enumerate() {

@@ -24,7 +24,7 @@ fn main_func(mut handle: SysHandle) {
         let _light_id = scene.create_light(GLight::new(
             Vector3::new(i as f32 * 10.0, 0.0, 0.0),
             Color::WHITE,
-            30.,
+            20.,
         ));
     }
 
@@ -36,7 +36,7 @@ fn main_func(mut handle: SysHandle) {
     });
     let count = 2;
     for i in -count..=count {
-        for j in -count..count {
+        for j in -count..=count {
             for k in -count..=count {
                 if i == j && j == k && k == 0 {
                     continue;
@@ -44,11 +44,11 @@ fn main_func(mut handle: SysHandle) {
                 scene.create_object(GObject {
                     model_name: "box".into(),
                     position: Vector3 {
-                        x: i as f32 * 5.0,
-                        y: j as f32 * 5.0,
-                        z: k as f32 * 5.0,
+                        x: i as f32 * 10.0,
+                        y: j as f32 * 10.0,
+                        z: k as f32 * 10.0,
                     },
-                    bounds: BoundingBox::new(Vector3::zero(), Vector3::zero()),
+                    bounds: BoundingBox::new(Vector3::one() * -0.5, Vector3::one() * 0.5),
                     rotation: Quaternion::identity(),
                 });
             }
