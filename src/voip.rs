@@ -67,7 +67,7 @@ pub fn spawn_voip(con: &str, id: GlobalId) -> Result<BStream<VoipCmd>, ()> {
 #[derive(Debug, Clone, Copy)]
 pub struct Packet {
     time: u128,
-    bytes: [f32; 1012],
+    bytes: [i16; 724],
     from: GlobalId,
     counter: u64,
     count: u64,
@@ -90,20 +90,21 @@ impl AudIoInner {
         let tmp = self.line.pop_front()?;
         if tmp.from == self.last_from {
             if tmp.counter != (self.last_sent + 1) % 4_000_000
-                && self.last_time.elapsed().as_millis() < 2 {
-                    self.line.push_front(tmp);
-                    return None;
-                }
+                && self.last_time.elapsed().as_millis() < 1
+            {
+                self.line.push_front(tmp);
+                return None;
+            }
             self.last_from = tmp.from;
             self.last_sent = tmp.counter;
             self.last_time = Instant::now();
             Some(tmp)
         } else {
-            if self.last_time.elapsed().as_millis() < 2 {
+            if self.last_time.elapsed().as_millis() < 1 {
                 self.line.push_front(tmp);
                 let l = self.line.len();
                 for _ in 0..l {
-                    if self.line[0].time > UNIX_EPOCH.elapsed().unwrap().as_millis() + 500 {
+                    if self.line[0].time > UNIX_EPOCH.elapsed().unwrap().as_millis() + 10 {
                         self.line.pop_front();
                     }
                 }
@@ -111,7 +112,7 @@ impl AudIoInner {
             } else {
                 let l = self.line.len();
                 for _ in 0..l {
-                    if self.line[0].time > UNIX_EPOCH.elapsed().unwrap().as_millis() + 500 {
+                    if self.line[0].time > UNIX_EPOCH.elapsed().unwrap().as_millis() + 10 {
                         self.line.pop_front();
                     }
                 }
@@ -128,9 +129,9 @@ impl AudIoInner {
         if value.time.abs_diff(now) > 2000 {
             return;
         }
-        if self.line.len() > 256 {
+        if self.line.len() > 16 {
             let l = self.line.len();
-            for _ in 0..l - 256 {
+            for _ in 0..l - 16 {
                 self.line.pop_front();
             }
         }
@@ -138,7 +139,7 @@ impl AudIoInner {
         for (idx, _) in self.line.iter().enumerate() {
             let p = self.line[idx];
             if p.time > value.time {
-                if p.time.abs_diff(value.time) < 100 {
+                if p.time.abs_diff(value.time) < 50 {
                     if value.from != p.from {
                         let x = &mut self.line[idx];
                         for i in 0..x.bytes.len() {
@@ -219,6 +220,7 @@ pub fn viable_input_config(
             let tmp = device.build_input_stream(
                 &t.config(),
                 move |stream: &[f32], _info| {
+                    // println!("{:#?}", stream);
                     let read = in_muted.read().unwrap();
                     if *read {
                         return;
@@ -230,14 +232,15 @@ pub fn viable_input_config(
                         from: id,
                         counter: *count,
                         time: UNIX_EPOCH.elapsed().unwrap().as_millis(),
-                        bytes: [0.0; _],
+                        bytes: [0; _],
                         count: 0,
                     };
                     *count += 1;
                     *count %= 4_000_000;
                     let mut not_zero = true;
                     while idx < stream.len() {
-                        pack.bytes[pack.count as usize] = stream[idx];
+                        pack.bytes[pack.count as usize] =
+                            (stream[idx] * (i16::MAX as f32 * 0.9)) as i16;
                         if stream[idx].abs() >= 0.01 {
                             not_zero = true;
                         }
@@ -315,7 +318,8 @@ pub fn viable_output_config(
                             if idx + i as usize >= cb.len() {
                                 break;
                             }
-                            cb[idx + i as usize] = pack.bytes[i as usize];
+                            cb[idx + i as usize] =
+                                pack.bytes[i as usize] as f32 / (i16::MAX as f32 * 0.9);
                         }
                         idx += pack.count as usize;
                     }

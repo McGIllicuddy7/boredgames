@@ -8,6 +8,7 @@ in vec4 fragColor;
 uniform sampler2D texture0;
 uniform vec4 colDiffuse;
 uniform float scanline;
+uniform int fancy;
 // Output fragment color
 out vec4 finalColor;
 float cbrt256 = 6.34960420787;
@@ -77,7 +78,7 @@ void main() {
   // finalColor = texelColor * colDiffuse * fragColor;
 
   vec4 base = texture(texture0, fragTexCoord);
-  if (false) {
+  if (fancy == 0) {
     finalColor = base;
     return;
   }

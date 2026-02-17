@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::dos::{SysHandle, scene};
+use crate::dos::SysHandle;
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct GObject {
     pub model_name: Arc<str>,
@@ -304,11 +304,10 @@ impl SceneRenderer {
             self.loaded_meshes.insert("box".into(), msh);
         }
         for i in &mut scene.objects {
-            if let Some(msh) = self.loaded_meshes.get(&i.1.model_name) {
-                if i.1.bounds == BoundingBox::new(Vector3::zero(), Vector3::zero()) {
+            if let Some(msh) = self.loaded_meshes.get(&i.1.model_name)
+                && i.1.bounds == BoundingBox::new(Vector3::zero(), Vector3::zero()) {
                     i.1.bounds = msh.get_model_bounding_box();
                 }
-            }
         }
         let shade = self.shader.as_mut().unwrap();
         let pos_loc = shade.get_shader_location("lightPositions");
@@ -318,7 +317,7 @@ impl SceneRenderer {
         let dist_lock = shade.get_shader_location("lightDistances");
         let dir_lock = shade.get_shader_location("directions");
         let lights: Vec<GLight> = scene.lights.iter().map(|i| *i.1).collect();
-        let _objects: Vec<GObject> = scene.objects.values().map(|i| i.clone()).collect();
+        let _objects: Vec<GObject> = scene.objects.values().cloned().collect();
         let mut nearest_set: Vec<GLight> = take_min(
             &mut |i: &GLight| (i.pos - scene.cam_pos).length() as f64,
             &lights,
@@ -330,11 +329,10 @@ impl SceneRenderer {
             for (idx, j) in directions.iter().enumerate() {
                 let ray_dir = *j;
                 let mut min_dist = 20.0;
-                if let Some((dist, _, _)) = tree.ray_cast(pos, ray_dir) {
-                    if dist < min_dist {
+                if let Some((dist, _, _)) = tree.ray_cast(pos, ray_dir)
+                    && dist < min_dist {
                         min_dist = dist;
                     }
-                }
                 i.distances[idx] = min_dist;
             }
         }
@@ -801,12 +799,11 @@ impl BSPTree {
         for (indx, i) in to_check.iter().enumerate() {
             let rot = RotBox::new(i.1.bounds, i.1.rotation, i.1.position);
             let cast = rot.ray_cast(start, direction);
-            if let Some(c) = cast {
-                if c < min_dist {
+            if let Some(c) = cast
+                && c < min_dist {
                     min_idx = indx as i32;
                     min_dist = c;
                 }
-            }
         }
         if min_idx != -1 {
             let (id, obj) = to_check[min_idx as usize].clone();
@@ -858,7 +855,7 @@ impl BSPTreeNode {
                 Axis::Y => objects[objects.len() / 2].1.position.y,
                 Axis::Z => objects[objects.len() / 2].1.position.z,
             };
-            let bounds = bound_set(objects.iter().map(|(i, j)| j));
+            let bounds = bound_set(objects.iter().map(|(_i, j)| j));
 
             /*  let (lbounds, rbounds) = match axis {
                 Axis::X => {

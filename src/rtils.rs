@@ -2551,6 +2551,130 @@ where {
                 .store(false, std::sync::atomic::Ordering::SeqCst);
         }
     }
+
+    use std::sync::{RwLockReadGuard, RwLockWriteGuard};
+
+    pub struct Global<T, U: FnOnce() -> T> {
+        spawn: Mutex<Option<U>>,
+        value: RwLock<Option<T>>,
+    }
+
+    pub struct GlobalReadGuard<'a, T> {
+        guard: RwLockReadGuard<'a, Option<T>>,
+    }
+    impl<'a, T> Deref for GlobalReadGuard<'a, T> {
+        type Target = T;
+
+        fn deref(&self) -> &Self::Target {
+            self.guard.as_ref().unwrap()
+        }
+    }
+    pub struct GlobalWriteGuard<'a, T> {
+        guard: RwLockWriteGuard<'a, Option<T>>,
+    }
+    impl<'a, T> Deref for GlobalWriteGuard<'a, T> {
+        type Target = T;
+
+        fn deref(&self) -> &Self::Target {
+            self.guard.as_ref().unwrap()
+        }
+    }
+    impl<'a, T> DerefMut for GlobalWriteGuard<'a, T> {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            self.guard.as_mut().unwrap()
+        }
+    }
+    impl<T, U: FnOnce() -> T> Global<T, U> {
+        pub const fn new(value: U) -> Self {
+            Self {
+                spawn: Mutex::new(Some(value)),
+                value: RwLock::new(None),
+            }
+        }
+        pub fn get(&self) -> GlobalReadGuard<'_, T> {
+            let lock = self.value.read().unwrap();
+            if lock.is_none() {
+                drop(lock);
+                let mut locks = self.value.write().unwrap();
+                let values = self.spawn.lock().unwrap().take().unwrap();
+                *locks = Some(values());
+            }
+            GlobalReadGuard {
+                guard: self.value.read().unwrap(),
+            }
+        }
+
+        pub fn get_mut(&self) -> GlobalWriteGuard<'_, T> {
+            let lock = self.value.read().unwrap();
+            if lock.is_none() {
+                drop(lock);
+                let mut locks = self.value.write().unwrap();
+                let values = self.spawn.lock().unwrap().take().unwrap();
+                *locks = Some(values());
+            } else {
+                drop(lock);
+            }
+
+            GlobalWriteGuard {
+                guard: self.value.write().unwrap(),
+            }
+        }
+    }
+    impl<T: Clone, U: FnOnce() -> T> Global<T, U> {
+        pub fn load(&self) -> T {
+            self.get().clone()
+        }
+        pub fn store(&self, value: T) {
+            *self.get_mut() = value;
+        }
+    }
+
+    #[macro_export]
+    macro_rules! global {
+        ( $name:ident: $type:ty= $value:expr) => {
+            #[allow(non_upper_case_globals)]
+            static $name: $crate::rtils::rtils_useful::Global<$type, fn() -> $type> =
+                $crate::rtils::rtils_useful::Global::new((move || ($value)));
+        };
+    }
+    pub struct GlobalConst<T, U: FnOnce() -> T> {
+        spawn: Mutex<Option<U>>,
+        value: RwLock<Option<T>>,
+    }
+
+    impl<T, U: FnOnce() -> T> GlobalConst<T, U> {
+        pub const fn new(value: U) -> Self {
+            Self {
+                spawn: Mutex::new(Some(value)),
+                value: RwLock::new(None),
+            }
+        }
+        pub fn get(&self) -> GlobalReadGuard<'_, T> {
+            let lock = self.value.read().unwrap();
+            if lock.is_none() {
+                drop(lock);
+                let mut locks = self.value.write().unwrap();
+                let values = self.spawn.lock().unwrap().take().unwrap();
+                *locks = Some(values());
+            }
+            GlobalReadGuard {
+                guard: self.value.read().unwrap(),
+            }
+        }
+    }
+    impl<T: Clone, U: FnOnce() -> T> GlobalConst<T, U> {
+        pub fn load(&self) -> T {
+            self.get().clone()
+        }
+    }
+    #[macro_export]
+    macro_rules! const_global {
+        ( $name:ident: $type:ty= $value:expr) => {
+            #[allow(non_upper_case_globals)]
+            static $name: $crate::rtils::rtils_useful::GlobalConst<$type, fn() -> $type> =
+                $crate::rtils::rtils_useful:GlobalConst::new((move || ($value)));
+        };
+    }
 }
 pub mod marathon {
     use super::rtils_useful::{

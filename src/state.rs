@@ -12,6 +12,7 @@ use raylib::color::Color;
 use raylib::texture::Image;
 pub use serde::{Deserialize, Serialize};
 pub use std::collections::BTreeMap;
+use std::collections::VecDeque;
 use std::io::BufRead;
 pub use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -40,7 +41,8 @@ pub struct UserMessage {
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ServerState {
-    pub messages: Vec<Message>,
+    pub messages_start: u64,
+    pub messages: VecDeque<Message>,
     pub users: HashMap<GlobalId, String>,
     pub map: TileMap,
     pub name: String,
@@ -124,6 +126,14 @@ pub enum Message {
         update: MapUpdate,
     },
     YouShouldLeave,
+    RequestMessagePage {
+        indx: u64,
+        before: bool,
+    },
+    MessagePage {
+        start_indx: u64,
+        contents: Vec<Message>,
+    },
 }
 impl ServerState {
     pub fn update(&mut self, update: MapUpdate, connection: &BStream<Message>) {
@@ -314,6 +324,11 @@ impl ServerState {
                     println!("renamed:{} to {}", id, name);
                 }
             },
+            Message::RequestMessagePage { indx: _, before: _ } => {}
+            Message::MessagePage {
+                start_indx: _,
+                contents: _,
+            } => {}
         }
     }
 
@@ -378,6 +393,11 @@ impl ServerState {
                         *self.users.get_mut(&id).unwrap() = to;
                     }
                     Message::SendMessage(_) => {}
+                    Message::RequestMessagePage { indx: _, before: _ } => {}
+                    Message::MessagePage {
+                        start_indx: _,
+                        contents: _,
+                    } => {}
                 }
             }
             if should_dc {
@@ -833,7 +853,8 @@ pub fn run_text_mode() {
                 let (stream, inp) = BStream::create();
                 host_server(to, inp);
                 let mut state = ServerState {
-                    messages: Vec::new(),
+                    messages_start: 0,
+                    messages: VecDeque::new(),
                     users: HashMap::new(),
                     id: GlobalId::invalid(),
                     name: name.clone(),
@@ -851,7 +872,8 @@ pub fn run_text_mode() {
                     continue;
                 };
                 let mut state = ServerState {
-                    messages: Vec::new(),
+                    messages_start: 0,
+                    messages: VecDeque::new(),
                     users: HashMap::new(),
                     id: GlobalId::invalid(),
                     name: name.clone(),
@@ -881,6 +903,7 @@ pub struct User {
     pub page_start: u64,
     pub id: GlobalId,
 }
+pub const PAGE_SIZE: u64 = 32;
 pub fn run_server(port: String, in_stream: BStream<Message>) {
     println!("running server!");
     let serv = spawn_voip_server(port.clone());
@@ -898,7 +921,8 @@ pub fn run_server(port: String, in_stream: BStream<Message>) {
     });
     let mut connections: HashMap<GlobalId, User> = HashMap::new();
     let mut state = ServerState {
-        messages: Vec::new(),
+        messages_start: 0,
+        messages: VecDeque::new(),
         users: HashMap::new(),
         name: "host".to_string(),
         id: gal.alloc_id(),
@@ -908,6 +932,7 @@ pub fn run_server(port: String, in_stream: BStream<Message>) {
     };
     let mut new_connections = Vec::new();
     new_connections.push(in_stream);
+    let mut page = Vec::new();
     loop {
         while let Ok(Some(x)) = rec.recieve() {
             new_connections.push(BStream::from_stream(x));
@@ -946,7 +971,7 @@ pub fn run_server(port: String, in_stream: BStream<Message>) {
         }
         new_connections = Vec::new();
         for (from, msg) in messages {
-            state.messages.push(msg.clone());
+            state.messages.push_back(msg.clone());
             match &msg {
                 Message::Disconnect { username: _, id } => {
                     println!("dced");
@@ -961,12 +986,55 @@ pub fn run_server(port: String, in_stream: BStream<Message>) {
                         &connections.get_mut(&from).unwrap().connection,
                     );
                 }
+                Message::RequestMessagePage { indx, before } => {
+                    let (to_get, idx) = if *before {
+                        if *indx == 0 {
+                            continue;
+                        }
+                        let id = (*indx - 1) / PAGE_SIZE;
+                        (
+                            format!("./history/page_{}.msgpack", (*indx - 1) / PAGE_SIZE),
+                            id * PAGE_SIZE,
+                        )
+                    } else {
+                        let id = (*indx + 1) / PAGE_SIZE;
+                        (
+                            format!("./history/page_{}.msgpack", (*indx + 1) / PAGE_SIZE),
+                            id * PAGE_SIZE,
+                        )
+                    };
+                    if let Ok(bytes) = std::fs::read(to_get)
+                        && let Ok(ser) = rmp_serde::from_slice(&bytes)
+                    {
+                        let _ = connections.get_mut(&from).unwrap().connection.send(
+                            Message::MessagePage {
+                                start_indx: idx,
+                                contents: ser,
+                            },
+                        );
+                    }
+                }
                 _ => {}
             }
             for (id, user) in &mut connections {
                 if *id != from {
                     user.connection.send(msg.clone()).unwrap();
                 }
+            }
+        }
+        while state.messages.len() > PAGE_SIZE as usize {
+            page.push(state.messages.pop_front().unwrap());
+            println!("hit");
+            if page.len() >= PAGE_SIZE as usize {
+                std::fs::write(
+                    format!(
+                        "./history/page_{}.msgpack",
+                        state.messages_start / PAGE_SIZE
+                    ),
+                    rmp_serde::to_vec(&page).unwrap(),
+                )
+                .unwrap();
+                page.clear();
             }
         }
         if connections.is_empty() {

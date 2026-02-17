@@ -36,6 +36,9 @@ impl Dos {
             .set_shader_value(loc, self.scan_line as f32 / (self.h as f32));
         self.scan_line += 1;
         self.scan_line %= self.h;
+        let floc = self.shader.as_ref().unwrap().get_shader_location("fancy");
+        self.shader.as_mut().unwrap().set_shader_value(floc, 0);
+
         let mut shade = handle.begin_texture_mode(_thread, self.canvas.as_mut().unwrap());
         shade.draw_shader_mode(self.shader.as_mut().unwrap(), |mut handle| {
             handle.draw_texture_pro(
@@ -56,9 +59,43 @@ impl Dos {
             0.0,
             Color::WHITE,
         );
-        handle.draw_fps(10, 10);
+        //handle.draw_fps(10, 10);
     }
+    pub fn draw_to(
+        &mut self,
+        handle: &mut impl RaylibDraw,
+        _thread: &RaylibThread,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+    ) {
+        let loc = self
+            .shader
+            .as_ref()
+            .unwrap()
+            .get_shader_location("scanline");
+        self.shader
+            .as_mut()
+            .unwrap()
+            .set_shader_value(loc, self.scan_line as f32 / (self.h as f32));
+        self.scan_line += 1;
+        self.scan_line %= self.h;
+        let floc = self.shader.as_ref().unwrap().get_shader_location("fancy");
+        self.shader.as_mut().unwrap().set_shader_value(floc, 0);
 
+        //let mut shade = handle.begin_texture_mode(_thread, self.canvas.as_mut().unwrap());
+        handle.draw_shader_mode(self.shader.as_mut().unwrap(), |mut handle| {
+            handle.draw_texture_pro(
+                self.render_texture.as_ref().unwrap(),
+                Rectangle::new(0.0, 0.0, SCREEN_WIDTH as f32, -(SCREEN_HEIGHT as f32)),
+                Rectangle::new(x as f32, y as f32, w as f32, h as f32),
+                Vector2::zero(),
+                0.0,
+                Color::WHITE,
+            );
+        });
+    }
     pub fn new() -> Self {
         Self {
             pallete: Pallete::new(BColor {
@@ -202,6 +239,55 @@ impl DosRt {
         }
     }
 
+    pub fn external_update(&mut self, handle: &mut RaylibHandle, thread: &RaylibThread) -> bool {
+        self.update_cmds(handle, thread);
+        if self.should_draw {
+            self.input_update(handle, thread);
+            if self.should_exit {
+                return true;
+            }
+            self.render(handle, thread);
+        }
+        self.dos.scene_renderer.should_draw = false;
+        return false;
+    }
+
+    pub fn external_draw_to(
+        &mut self,
+        handle: &mut impl RaylibDraw,
+        thread: &RaylibThread,
+        pos_x: i32,
+        pos_y: i32,
+        width: i32,
+        height: i32,
+    ) {
+        self.dos
+            .draw_to(handle, thread, pos_x, pos_y, width, height);
+    }
+    pub fn input_update(&mut self, handle: &mut RaylibHandle, thread: &RaylibThread) {
+        if let Some(key) = handle.get_char_pressed() {
+            self.input.pressed_keys.push(key);
+        }
+        if handle.window_should_close() {
+            self.should_exit = true;
+            self.cmd_pipeline.send(DrawCall::Exiting).unwrap();
+            return;
+        }
+        if handle.is_key_pressed(KeyboardKey::KEY_BACKSPACE) {
+            self.input.pressed_keys.push(127 as char);
+        }
+        if handle.is_key_pressed(KeyboardKey::KEY_ENTER) {
+            self.input.pressed_keys.push('\n');
+        }
+        self.input.input = super::input::generate_input(handle);
+        self.cmd_pipeline
+            .send(DrawCall::Update {
+                input: self.input.clone(),
+            })
+            .unwrap();
+        let mut drw = handle.begin_drawing(thread);
+        drw.clear_background(Color::BLACK);
+    }
     pub fn run_loop(&mut self, mut handle: RaylibHandle, thread: RaylibThread) {
         let ploc = self
             .dos
@@ -232,26 +318,7 @@ impl DosRt {
     }
 
     pub fn draw(&mut self, handle: &mut RaylibHandle, thread: &RaylibThread) {
-        if let Some(key) = handle.get_char_pressed() {
-            self.input.pressed_keys.push(key);
-        }
-        if handle.window_should_close() {
-            self.should_exit = true;
-            self.cmd_pipeline.send(DrawCall::Exiting).unwrap();
-            return;
-        }
-        if handle.is_key_pressed(KeyboardKey::KEY_BACKSPACE) {
-            self.input.pressed_keys.push(127 as char);
-        }
-        if handle.is_key_pressed(KeyboardKey::KEY_ENTER) {
-            self.input.pressed_keys.push('\n');
-        }
-        self.input.input = super::input::generate_input(handle);
-        self.cmd_pipeline
-            .send(DrawCall::Update {
-                input: self.input.clone(),
-            })
-            .unwrap();
+        self.input_update(handle, thread);
         let mut drw = handle.begin_drawing(thread);
         drw.clear_background(Color::BLACK);
         self.dos.draw(&mut drw, thread);
