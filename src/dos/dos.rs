@@ -38,7 +38,6 @@ impl Dos {
         self.scan_line %= self.h;
         let floc = self.shader.as_ref().unwrap().get_shader_location("fancy");
         self.shader.as_mut().unwrap().set_shader_value(floc, 0);
-
         let mut shade = handle.begin_texture_mode(_thread, self.canvas.as_mut().unwrap());
         shade.draw_shader_mode(self.shader.as_mut().unwrap(), |mut handle| {
             handle.draw_texture_pro(
@@ -285,8 +284,6 @@ impl DosRt {
                 input: self.input.clone(),
             })
             .unwrap();
-        let mut drw = handle.begin_drawing(thread);
-        drw.clear_background(Color::BLACK);
     }
     pub fn run_loop(&mut self, mut handle: RaylibHandle, thread: RaylibThread) {
         let ploc = self
@@ -322,7 +319,7 @@ impl DosRt {
         let mut drw = handle.begin_drawing(thread);
         drw.clear_background(Color::BLACK);
         self.dos.draw(&mut drw, thread);
-        // drw.draw_fps(100, 100);
+        drw.draw_fps(100, 100);
     }
 
     pub fn run_draw_call<T>(

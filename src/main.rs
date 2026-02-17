@@ -1,3 +1,5 @@
+use crate::dos::{SysHandle, setup};
+
 pub mod client;
 pub mod dos;
 pub mod id;
@@ -12,5 +14,8 @@ pub fn main() {
     println!("{}", x.load());
     x.store(32);
     println!("{}", x.load());
-    //setup(main_func);
+    setup(main_func);
+}
+pub fn main_func(mut handle: SysHandle) {
+    client::run_client(&mut handle);
 }

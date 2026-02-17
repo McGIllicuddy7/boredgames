@@ -1,3 +1,8 @@
+use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
+
+use crate::dos::tilemap::{TILE_LAYER, TileMap};
+use crate::id::{ArachneId, GlobalId, IdAllocator};
 use crate::state::{Message, MessageContents};
 use crate::{
     dos::SysHandle, dos::SysUiMode, rtils::marathon::BStream, state::ServerState, voip::VoipCmd,
@@ -12,6 +17,7 @@ impl Client {
         con: &BStream<Message>,
         voip: &mut Option<BStream<VoipCmd>>,
     ) {
+        println!("x");
         let mut should_dc = false;
         let mut should_exit = false;
         while !handle.should_exit() {
@@ -40,8 +46,8 @@ impl Client {
                     }
                 })
                 .collect();
-            handle.draw_text_scroll_box("messages", 300, 800, 10, true, &v, |i: &String| i.clone());
-            let omsg = handle.text_user_input_saved_exp("input", 0, 0, 300, 100, 10);
+            handle.draw_text_scroll_box("messages", 300, 600, 10, true, &v, |i: &String| i.clone());
+            let omsg = handle.text_user_input_saved_exp("base_input", 0, 0, 300, 100, 10);
             if let Some(m) = omsg {
                 self.state
                     .run_cmd(m, con, &mut should_dc, &mut should_exit, voip);
@@ -56,8 +62,8 @@ pub fn run_client(handle: &mut SysHandle) {
     while !handle.should_exit() {
         let mut name = "bridget".to_string();
         handle.begin_drawing();
-        handle.begin_div_exp(400, 200, 400, 600, true, SysUiMode::Sequential);
-        let msg = handle.text_user_input_saved_exp("base_input", 0, 0, 400, 600, 10);
+        handle.begin_div_exp(400, 200, 400, 400, true, SysUiMode::Sequential);
+        let msg = handle.text_user_input_saved_exp("base_input", 0, 0, 400, 200, 10);
         handle.end_div();
         handle.end_drawing();
         if let Some(input) = msg {
@@ -78,7 +84,7 @@ pub fn run_client(handle: &mut SysHandle) {
                     };
                     let (stream, inp) = BStream::create();
                     crate::state::host_server(to, inp);
-                    let mut state = ServerState {
+                    let state = ServerState {
                         messages_start: 0,
                         messages: VecDeque::new(),
                         users: HashMap::new(),
@@ -89,7 +95,7 @@ pub fn run_client(handle: &mut SysHandle) {
                         current_layer: TILE_LAYER,
                     };
                     let mut client = Client { state };
-                    client.run(&mut handle, &stream, &mut None);
+                    client.run(handle, &stream, &mut None);
                 }
                 "join" => {
                     let Some(to) = inputs.next() else {
@@ -98,7 +104,7 @@ pub fn run_client(handle: &mut SysHandle) {
                     let Ok(stream) = std::net::TcpStream::connect((to, 8008)) else {
                         continue;
                     };
-                    let mut state = ServerState {
+                    let state = ServerState {
                         messages_start: 0,
                         messages: VecDeque::new(),
                         users: HashMap::new(),
@@ -109,7 +115,8 @@ pub fn run_client(handle: &mut SysHandle) {
                         alloc: Arc::new(IdAllocator::new(0)),
                     };
                     let st = BStream::from_stream(stream);
-                    state.text_client(st, &mut stdin_p, to.to_string());
+                    let mut client = Client { state };
+                    client.run(handle, &st, &mut None);
                 }
                 "exit" => {
                     break;
