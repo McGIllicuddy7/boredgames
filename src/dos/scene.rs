@@ -149,7 +149,7 @@ impl Scene {
             cam_rot: Quaternion::new(1.0, 0.0, 0.0, 0.0),
             objects: BTreeMap::new(),
             lights: BTreeMap::new(),
-            f_debug_lights: false,
+            f_debug_lights: true,
         }
     }
 

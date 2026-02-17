@@ -24,7 +24,7 @@ fn main_func(mut handle: SysHandle) {
         let _light_id = scene.create_light(GLight::new(
             Vector3::new(i as f32 * 10.0, 0.0, 0.0),
             Color::WHITE,
-            20.,
+            40.,
         ));
     }
 
@@ -34,7 +34,7 @@ fn main_func(mut handle: SysHandle) {
         bounds: BoundingBox::new(Vector3::new(-0.5, -0.5, -0.5), Vector3::new(0.5, 0.5, 0.5)),
         rotation: Quaternion::identity(),
     });
-    let count = 2;
+    let count = 5;
     for i in -count..=count {
         for j in -count..=count {
             for k in -count..=count {
@@ -44,9 +44,9 @@ fn main_func(mut handle: SysHandle) {
                 scene.create_object(GObject {
                     model_name: "box".into(),
                     position: Vector3 {
-                        x: i as f32 * 10.0,
-                        y: j as f32 * 10.0,
-                        z: k as f32 * 10.0,
+                        x: i as f32 * 5.0,
+                        y: j as f32 * 5.0,
+                        z: k as f32 * 5.0,
                     },
                     bounds: BoundingBox::new(Vector3::one() * -0.5, Vector3::one() * 0.5),
                     rotation: Quaternion::identity(),
@@ -60,8 +60,8 @@ fn main_func(mut handle: SysHandle) {
         idx += 1;
         idx %= 6290;
         let x = scene.get_object_mut(mesh_id).unwrap();
-        x.position.x = 4.0 * (idx as f32 / 100.0).cos();
-        x.position.z = 4.0 * (idx as f32 / 100.0).sin();
+        x.position.x = 2.0 * (idx as f32 / 100.0).cos();
+        x.position.z = 2.0 * (idx as f32 / 100.0).sin();
         //    println!("{:#?},{:#?}", x.position.x, x.position.z);
         handle.send_draw_calls(
             vec![DrawCall::DrawScene {

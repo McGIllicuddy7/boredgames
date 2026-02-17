@@ -77,7 +77,7 @@ void main() {
   // finalColor = texelColor * colDiffuse * fragColor;
 
   vec4 base = texture(texture0, fragTexCoord);
-  if (true) {
+  if (false) {
     finalColor = base;
     return;
   }
