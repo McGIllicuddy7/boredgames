@@ -20,6 +20,7 @@ async fn main() {
         let mut gui = GUI::new(&mut handle, &thread);
         gui.centered_horizontal(|cmds| {
             cmds.container(600, |cmds| {
+                cmds.text("hi papa i love you", 42);
                 cmds.text("hello world", 16);
                 cmds.text(&format!("counter:{}", counter.borrow()), 16);
                 cmds.button("increment", 16, || {
