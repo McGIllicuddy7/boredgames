@@ -42,9 +42,9 @@ async fn main() {
                 });
             });
             let nyan = nyan.clone();
-            cmds.canvas(300, 300,move |bounds, state, cmds, handle, thread|{
-                cmds.draw_texture_scaled_rotated(&nyan, 50,50, 256, 256 ,state.rotation);
-                state.rotation += handle.get_frame_time()*90.;
+            cmds.canvas(512,512,move |bounds, state, cmds, handle,_thread|{
+                cmds.draw_texture_scaled_rotated(&nyan, 128,128, 256, 256 ,state.rotation);
+               state.rotation += handle.get_frame_time()*90.;
             });
             cmds.container(300, |cmds| {
                 cmds.h1("list");

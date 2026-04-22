@@ -221,6 +221,110 @@ impl DrawCommand {
             }
         }
     }
+
+    pub fn set_scale(&mut self, scale_x: f32, scale_y: f32) {
+        match self {
+            DrawCommand::Shader {
+                shader: _,
+                commands,
+            } => {
+                for i in commands {
+                    i.set_scale(scale_x, scale_y);
+                }
+            }
+            DrawCommand::MutateShader {
+                shader: _,
+                function: _,
+            } => {}
+            DrawCommand::Scissor { children, bounds } => {
+                bounds.x = (bounds.x as f32 * scale_x) as i32;
+                bounds.y = (bounds.y as f32 * scale_y) as i32;
+                bounds.width = (bounds.width as f32 * scale_x) as i32;
+                bounds.height = (bounds.height as f32 * scale_y) as i32;
+                for i in children {
+                    i.set_scale(scale_x, scale_y);
+                }
+            }
+            DrawCommand::DrawRectangle { color: _, bounds } => {
+                bounds.x = (bounds.x as f32 * scale_x) as i32;
+                bounds.y = (bounds.y as f32 * scale_y) as i32;
+                bounds.width = (bounds.width as f32 * scale_x) as i32;
+                bounds.height = (bounds.height as f32 * scale_y) as i32;
+            }
+            DrawCommand::DrawText {
+                pos_x,
+                pos_y,
+                text_height,
+                color: _,
+                text: _,
+            } => {
+                *pos_x = (*pos_x as f32 * scale_x) as i32;
+                *pos_y = (*pos_y as f32 * scale_y) as i32;
+                *text_height = (*text_height as f32 * scale_y) as i32;
+            }
+            DrawCommand::ClearBackground { color: _ } => {}
+            DrawCommand::DrawTexture {
+                image: _,
+                bounds,
+                rotation: _,
+                tint: _,
+            } => {
+                bounds.x = (bounds.x as f32 * scale_x) as i32;
+                bounds.y = (bounds.y as f32 * scale_y) as i32;
+                bounds.width = (bounds.width as f32 * scale_x) as i32;
+                bounds.height = (bounds.height as f32 * scale_y) as i32;
+            }
+            DrawCommand::DrawRenderTexture {
+                image: _,
+                bounds,
+                rotation: _,
+                tint: _,
+            } => {
+                bounds.x = (bounds.x as f32 * scale_x) as i32;
+                bounds.y = (bounds.y as f32 * scale_y) as i32;
+                bounds.width = (bounds.width as f32 * scale_x) as i32;
+                bounds.height = (bounds.height as f32 * scale_y) as i32;
+            }
+            DrawCommand::DrawCircle { x, y, r, color: _ } => {
+                *x = (*x as f32 * scale_x) as i32;
+                *y = (*y as f32 * scale_y) as i32;
+                *r *= (scale_x + scale_y) / 2. as f32;
+            }
+            DrawCommand::DrawLine {
+                x0,
+                y0,
+                x1,
+                y1,
+                width: _,
+                color: _,
+            } => {
+                *x0 = (*x0 as f32 * scale_x) as i32;
+                *y0 = (*y0 as f32 * scale_y) as i32;
+                *x1 = (*x1 as f32 * scale_x) as i32;
+                *y1 = (*y1 as f32 * scale_y) as i32;
+            }
+            DrawCommand::DrawPointsLines {
+                points,
+                width: _,
+                color: _,
+            } => {
+                for i in points {
+                    i.x = (i.x as f32 * scale_x) as i32;
+                    i.y = (i.y as f32 * scale_y) as i32;
+                }
+            }
+            DrawCommand::DrawPoints {
+                points,
+                radii: _,
+                color: _,
+            } => {
+                for i in points {
+                    i.x = (i.x as f32 * scale_x) as i32;
+                    i.y = (i.y as f32 * scale_y) as i32;
+                }
+            }
+        }
+    }
 }
 #[derive(Clone)]
 pub struct CommandBuffer {
@@ -521,6 +625,11 @@ impl CommandBuffer {
         }
     }
 
+    pub fn set_scale(&mut self, scale_x: f32, scale_y: f32) {
+        for i in &mut self.calls {
+            i.set_scale(scale_x, scale_y);
+        }
+    }
     pub fn run(&mut self, handle: &mut RaylibHandle, thread: &RaylibThread) {
         for i in &mut self.render_texture_calls {
             Self::run_render_cmd(i, handle, thread);
@@ -624,8 +733,8 @@ impl CommandBuffer {
                         height: image.height() as f32,
                     },
                     Rectangle {
-                        x: bounds.x as f32 + (bounds.width / 2) as f32,
-                        y: bounds.y as f32 + (bounds.height / 2) as f32,
+                        x: bounds.x as f32,
+                        y: bounds.y as f32,
                         width: bounds.width as f32,
                         height: bounds.height as f32,
                     },
@@ -748,8 +857,8 @@ impl CommandBuffer {
                         height: image.height() as f32,
                     },
                     Rectangle {
-                        x: bounds.x as f32 + (bounds.width / 2) as f32,
-                        y: bounds.y as f32 + (bounds.height / 2) as f32,
+                        x: bounds.x as f32,
+                        y: bounds.y as f32,
                         width: bounds.width as f32,
                         height: bounds.height as f32,
                     },
@@ -774,8 +883,8 @@ impl CommandBuffer {
                         height: image.height() as f32,
                     },
                     Rectangle {
-                        x: bounds.x as f32 + (bounds.width / 2) as f32,
-                        y: bounds.y as f32 + (bounds.height / 2) as f32,
+                        x: bounds.x as f32,
+                        y: bounds.y as f32,
                         width: bounds.width as f32,
                         height: bounds.height as f32,
                     },
@@ -914,6 +1023,8 @@ pub enum Widget<State> {
     Canvas {
         style: Style,
         bounds: Bounds,
+        scale_x: f32,
+        scale_y: f32,
         to_run: Arc<
             Mutex<
                 Box<
@@ -978,6 +1089,8 @@ impl<State> Widget<State> {
                 bounds,
                 to_run: _,
                 style: _,
+                scale_x: _,
+                scale_y: _,
             } => *bounds,
             Widget::TextInput {
                 data: _,
@@ -1052,6 +1165,8 @@ impl<State> Widget<State> {
                 bounds,
                 to_run: _,
                 style: _,
+                scale_x: _,
+                scale_y: _,
             } => {
                 bounds.x += dx;
                 bounds.y += dy;
@@ -1155,9 +1270,13 @@ impl<State> Widget<State> {
                 bounds,
                 to_run: _,
                 style: _,
+                scale_x,
+                scale_y,
             } => {
                 bounds.x = (bounds.x as f32 * rx) as i32;
                 bounds.y = (bounds.y as f32 * ry) as i32;
+                *scale_x *= rx;
+                *scale_y *= ry;
                 bounds.height = (bounds.height as f32 * ry) as i32;
                 bounds.width = (bounds.width as f32 * rx) as i32;
             }
@@ -1344,11 +1463,14 @@ impl<State> Widget<State> {
                 bounds,
                 to_run,
                 style,
+                scale_x,
+                scale_y,
             } => {
                 let mut func = to_run.lock().unwrap();
                 let mut tbuffer = CommandBufferBuilder::new();
                 func(*bounds, state, &mut tbuffer, handle, thread);
                 let mut built = tbuffer.build();
+                built.set_scale(*scale_x, *scale_y);
                 built.set_origin(Point {
                     x: bounds.x,
                     y: bounds.y,
@@ -1544,6 +1666,8 @@ impl<'a, State> HorizontalContainerBuilder<'a, State> {
                 width,
                 height,
             },
+            scale_x: 1.0,
+            scale_y: 1.0,
             style: self.style,
             to_run: Arc::new(Mutex::new(Box::new(to_render))),
         };
@@ -2287,6 +2411,8 @@ impl<'a, State> ContainerBuilder<'a, State> {
                 width: self.bounds.width - self.padding * 2,
                 height,
             },
+            scale_x: 1.0,
+            scale_y: 1.0,
             style: self.style,
             to_run: Arc::new(Mutex::new(Box::new(to_render))),
         };
@@ -2655,6 +2781,8 @@ impl<'a, State> ScrollBoxContainerBuilder<'a, State> {
                 width: self.bounds.width - self.padding * 2,
                 height,
             },
+            scale_x: 1.0,
+            scale_y: 1.0,
             style: self.style,
             to_run: Arc::new(Mutex::new(Box::new(to_render))),
         };
@@ -3028,6 +3156,8 @@ impl<'a, State> ReversedScrollBoxContainerBuilder<'a, State> {
             },
             to_run: Arc::new(Mutex::new(Box::new(to_render))),
             style: self.style,
+            scale_x: 1.0,
+            scale_y: 1.0,
         };
 
         self.children.push(w);
@@ -3109,8 +3239,11 @@ impl Style {
 
 impl<'a, State> GUI<'a, State> {
     pub fn new(_state: &State, handle: &'a mut RaylibHandle, thread: &'a RaylibThread) -> Self {
-        let dx = handle.get_screen_width();
-        let dy = handle.get_screen_height();
+        let dx1 = handle.get_screen_width();
+        let dy1 = (dx1 * 1080) / 1920;
+        let dy2 = handle.get_screen_height();
+        let dx2 = (dy2 * 1920) / 1080;
+        let (dx, dy) = if dy1 > dy2 { (dx2, dy2) } else { (dx1, dy1) };
         Self {
             actual_dimension_x: dx,
             actual_dimension_y: dy,
