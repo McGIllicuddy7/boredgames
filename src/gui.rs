@@ -1,4 +1,8 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 use raylib::{
     RaylibHandle, RaylibThread,
@@ -121,7 +125,10 @@ pub enum DrawCommand {
 impl DrawCommand {
     pub fn set_origin(&mut self, point: Point) {
         match self {
-            DrawCommand::Shader { shader, commands } => {
+            DrawCommand::Shader {
+                shader: _,
+                commands,
+            } => {
                 for i in commands {
                     i.set_origin(point);
                 }
@@ -292,6 +299,19 @@ impl CommandBufferBuilder {
         });
     }
 
+    pub fn draw_texture_rotated(&mut self, image: &Arc<Texture2D>, x: i32, y: i32, rotation: f32) {
+        self.values.push(DrawCommand::DrawTexture {
+            image: image.clone(),
+            bounds: Bounds {
+                x,
+                y,
+                width: image.width(),
+                height: image.height(),
+            },
+            rotation,
+            tint: Color::WHITE,
+        });
+    }
     pub fn draw_texture_scaled(
         &mut self,
         image: &Arc<Texture2D>,
@@ -309,6 +329,28 @@ impl CommandBufferBuilder {
                 height,
             },
             rotation: 0.0,
+            tint: Color::WHITE,
+        });
+    }
+
+    pub fn draw_texture_scaled_rotated(
+        &mut self,
+        image: &Arc<Texture2D>,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        rotation: f32,
+    ) {
+        self.values.push(DrawCommand::DrawTexture {
+            image: image.clone(),
+            bounds: Bounds {
+                x,
+                y,
+                width,
+                height,
+            },
+            rotation,
             tint: Color::WHITE,
         });
     }
@@ -553,15 +595,15 @@ impl CommandBuffer {
                         x: 0.0,
                         y: 0.0,
                         width: image.width() as f32,
-                        height: image.height as f32,
+                        height: image.height() as f32,
                     },
                     Rectangle {
-                        x: bounds.x as f32,
-                        y: bounds.y as f32,
+                        x: bounds.x as f32 + (bounds.width / 2) as f32,
+                        y: bounds.y as f32 + (bounds.height / 2) as f32,
                         width: bounds.width as f32,
                         height: bounds.height as f32,
                     },
-                    Vector2::new(bounds.x as f32, bounds.y as f32),
+                    Vector2::new(bounds.width as f32 / 2., bounds.height as f32 / 2.),
                     *rotation,
                     *tint,
                 );
@@ -582,12 +624,12 @@ impl CommandBuffer {
                         height: image.height() as f32,
                     },
                     Rectangle {
-                        x: bounds.x as f32,
-                        y: bounds.y as f32,
+                        x: bounds.x as f32 + (bounds.width / 2) as f32,
+                        y: bounds.y as f32 + (bounds.height / 2) as f32,
                         width: bounds.width as f32,
                         height: bounds.height as f32,
                     },
-                    Vector2::new(bounds.x as f32, bounds.y as f32),
+                    Vector2::new(bounds.width as f32 / 2., bounds.height as f32 / 2.),
                     *rotation,
                     *tint,
                 );
@@ -703,15 +745,15 @@ impl CommandBuffer {
                         x: 0.0,
                         y: 0.0,
                         width: image.width() as f32,
-                        height: image.height as f32,
+                        height: image.height() as f32,
                     },
                     Rectangle {
-                        x: bounds.x as f32,
-                        y: bounds.y as f32,
+                        x: bounds.x as f32 + (bounds.width / 2) as f32,
+                        y: bounds.y as f32 + (bounds.height / 2) as f32,
                         width: bounds.width as f32,
                         height: bounds.height as f32,
                     },
-                    Vector2::new(bounds.x as f32, bounds.y as f32),
+                    Vector2::new(bounds.width as f32 / 2., bounds.height as f32 / 2.),
                     *rotation,
                     *tint,
                 );
@@ -732,12 +774,12 @@ impl CommandBuffer {
                         height: image.height() as f32,
                     },
                     Rectangle {
-                        x: bounds.x as f32,
-                        y: bounds.y as f32,
+                        x: bounds.x as f32 + (bounds.width / 2) as f32,
+                        y: bounds.y as f32 + (bounds.height / 2) as f32,
                         width: bounds.width as f32,
                         height: bounds.height as f32,
                     },
-                    Vector2::new(bounds.x as f32, bounds.y as f32),
+                    Vector2::new(bounds.width as f32 / 2., bounds.height as f32 / 2.),
                     *rotation,
                     *tint,
                 );
@@ -801,18 +843,50 @@ pub struct Style {
     pub header_height: i32,
     pub paragraph_height: i32,
 }
-pub enum Widget<'a> {
+
+#[derive(Clone, Debug)]
+pub struct ScrollBoxData {
+    pub value: Rc<RefCell<f32>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TextBoxData {
+    pub text: Rc<RefCell<String>>,
+    pub output: Rc<RefCell<Option<String>>>,
+    pub is_selected: Rc<RefCell<bool>>,
+}
+impl ScrollBoxData {
+    pub fn new() -> Self {
+        Self {
+            value: Rc::new(RefCell::new(0.0)),
+        }
+    }
+}
+
+impl TextBoxData {
+    pub fn new() -> Self {
+        Self {
+            text: Rc::new(RefCell::new(String::new())),
+            output: Rc::new(RefCell::new(None)),
+            is_selected: Rc::new(RefCell::new(false)),
+        }
+    }
+    pub fn output(&self) -> Option<String> {
+        self.output.borrow_mut().take()
+    }
+}
+pub enum Widget<State> {
     Container {
         style: Style,
         bounds: Bounds,
-        children: Vec<Widget<'a>>,
+        children: Vec<Widget<State>>,
     },
     ScrollBox {
         style: Style,
         reversed: bool,
         bounds: Bounds,
-        children: Vec<Widget<'a>>,
-        scroll_amount: &'a mut f32,
+        children: Vec<Widget<State>>,
+        scroll_amount: ScrollBoxData,
         displacement: i32,
     },
     Text {
@@ -833,29 +907,36 @@ pub enum Widget<'a> {
     },
     Button {
         style: Style,
-        child: Box<Widget<'a>>,
+        child: Box<Widget<State>>,
         bounds: Bounds,
-        on_click: Box<dyn FnMut() + 'a>,
+        on_click: Box<dyn FnMut(&mut State)>,
     },
     Canvas {
+        style: Style,
         bounds: Bounds,
         to_run: Arc<
             Mutex<
-                Box<dyn FnMut(Bounds, &mut CommandBufferBuilder, &mut RaylibHandle, &RaylibThread)>,
+                Box<
+                    dyn FnMut(
+                        Bounds,
+                        &mut State,
+                        &mut CommandBufferBuilder,
+                        &mut RaylibHandle,
+                        &RaylibThread,
+                    ),
+                >,
             >,
         >,
     },
     TextInput {
-        text: &'a mut String,
-        output: &'a mut Option<String>,
+        data: TextBoxData,
         split: Vec<Arc<str>>,
-        is_selected: &'a mut bool,
         bounds: Bounds,
         text_height: i32,
         style: Style,
     },
 }
-impl<'a> Widget<'a> {
+impl<State> Widget<State> {
     pub fn bounds(&self) -> Bounds {
         match self {
             Widget::Container {
@@ -893,15 +974,17 @@ impl<'a> Widget<'a> {
                 bounds,
                 on_click: _,
             } => *bounds,
-            Widget::Canvas { bounds, to_run: _ } => *bounds,
+            Widget::Canvas {
+                bounds,
+                to_run: _,
+                style: _,
+            } => *bounds,
             Widget::TextInput {
-                text: _,
-                is_selected: _,
+                data: _,
                 split: _,
                 bounds,
                 text_height: _,
                 style: _,
-                output: _,
             } => *bounds,
         }
     }
@@ -965,18 +1048,20 @@ impl<'a> Widget<'a> {
                 bounds.y += dy;
                 child.shift(old_pos, new_pos);
             }
-            Widget::Canvas { bounds, to_run: _ } => {
+            Widget::Canvas {
+                bounds,
+                to_run: _,
+                style: _,
+            } => {
                 bounds.x += dx;
                 bounds.y += dy;
             }
             Widget::TextInput {
-                text: _,
                 split: _,
-                is_selected: _,
                 bounds,
                 text_height: _,
                 style: _,
-                output: _,
+                data: _,
             } => {
                 bounds.x += dx;
                 bounds.y += dy;
@@ -1066,20 +1151,22 @@ impl<'a> Widget<'a> {
                 bounds.width = (bounds.width as f32 * rx) as i32;
                 child.rescale(new_width, new_height);
             }
-            Widget::Canvas { bounds, to_run: _ } => {
+            Widget::Canvas {
+                bounds,
+                to_run: _,
+                style: _,
+            } => {
                 bounds.x = (bounds.x as f32 * rx) as i32;
                 bounds.y = (bounds.y as f32 * ry) as i32;
                 bounds.height = (bounds.height as f32 * ry) as i32;
                 bounds.width = (bounds.width as f32 * rx) as i32;
             }
             Widget::TextInput {
-                text: _,
                 split: _,
-                is_selected: _,
                 bounds,
                 text_height,
                 style: _,
-                output: _,
+                data: _,
             } => {
                 bounds.x = (bounds.x as f32 * rx) as i32;
                 bounds.y = (bounds.y as f32 * ry) as i32;
@@ -1092,6 +1179,7 @@ impl<'a> Widget<'a> {
 
     pub fn render(
         &mut self,
+        state: &mut State,
         handle: &mut RaylibHandle,
         thread: &RaylibThread,
         cmd: &mut CommandBufferBuilder,
@@ -1117,7 +1205,7 @@ impl<'a> Widget<'a> {
                     style.container_color,
                 );
                 for i in children {
-                    i.render(handle, thread, cmd);
+                    i.render(state, handle, thread, cmd);
                 }
             }
             Widget::ScrollBox {
@@ -1149,21 +1237,22 @@ impl<'a> Widget<'a> {
                         y: pos.y as i32,
                     });
                     let sign = if *reversed { -1. } else { 1.0 };
+                    let mut scroll_amount = scroll_amount.value.borrow_mut();
                     if contains {
-                        **scroll_amount +=
+                        *scroll_amount +=
                             -handle.get_mouse_wheel_move() * handle.get_frame_time() * 420.
                                 / (displacement.abs() as f32 + 1.0)
                                 * sign;
-                        if **scroll_amount < 0.0 {
-                            **scroll_amount = 0.0;
-                        } else if **scroll_amount > 1.0 {
-                            **scroll_amount = 1.0;
+                        if *scroll_amount < 0.0 {
+                            *scroll_amount = 0.0;
+                        } else if *scroll_amount > 1.0 {
+                            *scroll_amount = 1.0;
                         }
                     }
                     for i in children {
                         let b = i.bounds();
                         if b.intersects(bounds) {
-                            i.render(handle, thread, cmd);
+                            i.render(state, handle, thread, cmd);
                         }
                     }
                 });
@@ -1246,23 +1335,48 @@ impl<'a> Widget<'a> {
                         style.button_color
                     },
                 );
-                child.render(handle, thread, cmd);
+                child.render(state, handle, thread, cmd);
                 if mouse_released && contains {
-                    on_click();
+                    on_click(state);
                 }
             }
-            Widget::Canvas { bounds, to_run } => {
+            Widget::Canvas {
+                bounds,
+                to_run,
+                style,
+            } => {
                 let mut func = to_run.lock().unwrap();
-                func(*bounds, cmd, handle, thread);
+                let mut tbuffer = CommandBufferBuilder::new();
+                func(*bounds, state, &mut tbuffer, handle, thread);
+                let mut built = tbuffer.build();
+                built.set_origin(Point {
+                    x: bounds.x,
+                    y: bounds.y,
+                });
+                cmd.draw_rectangle(
+                    bounds.x,
+                    bounds.y,
+                    bounds.width,
+                    bounds.height,
+                    style.outline_color,
+                );
+                cmd.draw_rectangle(
+                    bounds.x + 2,
+                    bounds.y + 2,
+                    bounds.width - 4,
+                    bounds.height - 4,
+                    style.container_color,
+                );
+                cmd.scissor(bounds.x, bounds.y, bounds.width, bounds.height, |cmds| {
+                    cmds.run_command_buffer(built);
+                });
             }
             Widget::TextInput {
-                text,
                 split,
-                is_selected,
                 bounds,
                 text_height,
                 style,
-                output,
+                data,
             } => {
                 let base_x = bounds.x + style.padding;
                 let mut base_y = bounds.y + style.padding;
@@ -1279,44 +1393,61 @@ impl<'a> Widget<'a> {
                 cmd.draw_rectangle(
                     bounds.x + 2,
                     bounds.y + 2,
-                    bounds.width - 2,
-                    bounds.height - 2,
+                    bounds.width - 4,
+                    bounds.height - 4,
                     style.container_color,
                 );
                 let mut last_line = bounds.y + style.padding;
                 let mut last_offset = style.padding;
-                for i in split {
-                    last_offset = handle.measure_text(&*i, *text_height);
-                    last_line = base_y;
-                    cmd.draw_text(i.clone(), base_x, base_y, *text_height, style.text_color);
-                    base_y += *text_height;
-                }
-                cmd.draw_rectangle(
-                    last_offset + bounds.x + style.padding,
-                    last_line,
-                    *text_height / 10,
-                    *text_height,
-                    style.outline_color,
+                cmd.scissor(
+                    bounds.x + 2,
+                    bounds.y + 2,
+                    bounds.width - 4,
+                    bounds.height - 4,
+                    |cmd| {
+                        for i in split {
+                            last_offset = handle.measure_text(&*i, *text_height);
+                            last_line = base_y;
+                            cmd.draw_text(
+                                i.clone(),
+                                base_x,
+                                base_y,
+                                *text_height,
+                                style.text_color,
+                            );
+                            base_y += *text_height;
+                        }
+                        cmd.draw_rectangle(
+                            last_offset + bounds.x + style.padding,
+                            last_line,
+                            *text_height / 10,
+                            *text_height,
+                            style.outline_color,
+                        );
+                    },
                 );
                 let pos = handle.get_mouse_position();
                 let contains = bounds.contains_point(Point {
                     x: pos.x as i32,
                     y: pos.y as i32,
                 });
+                let mut text = data.text.borrow_mut();
+                let mut is_selected = data.is_selected.borrow_mut();
+                let mut output = data.output.borrow_mut();
                 if contains
                     && handle.is_mouse_button_released(raylib::ffi::MouseButton::MOUSE_BUTTON_LEFT)
                 {
-                    **is_selected = true;
+                    *is_selected = true;
                 }
                 if (!contains
                     && handle.is_mouse_button_released(raylib::ffi::MouseButton::MOUSE_BUTTON_LEFT))
                     || handle.is_key_pressed(raylib::ffi::KeyboardKey::KEY_ESCAPE)
                 {
-                    **is_selected = false;
+                    *is_selected = false;
                 }
-                if **is_selected {
+                if *is_selected {
                     if handle.is_key_pressed(raylib::ffi::KeyboardKey::KEY_ENTER) {
-                        **output = Some(text.clone());
+                        *output = Some(text.clone());
                         text.clear();
                     }
                     if handle.is_key_pressed(raylib::ffi::KeyboardKey::KEY_DELETE)
@@ -1333,46 +1464,46 @@ impl<'a> Widget<'a> {
     }
 }
 
-pub struct ContainerBuilder<'a, 'b> {
+pub struct ContainerBuilder<'a, State> {
     style: Style,
-    handle: &'b RaylibHandle,
+    handle: &'a RaylibHandle,
     bounds: Bounds,
     padding: i32,
-    children: Vec<Widget<'a>>,
+    children: Vec<Widget<State>>,
 }
 
-pub struct HorizontalContainerBuilder<'a, 'b> {
+pub struct HorizontalContainerBuilder<'a, State> {
     style: Style,
-    handle: &'b RaylibHandle,
+    handle: &'a RaylibHandle,
     bounds: Bounds,
     padding: i32,
-    children: Vec<Widget<'a>>,
+    children: Vec<Widget<State>>,
 }
 
-pub struct ScrollBoxContainerBuilder<'a, 'b> {
+pub struct ScrollBoxContainerBuilder<'a, State> {
     style: Style,
-    handle: &'b RaylibHandle,
+    handle: &'a RaylibHandle,
     bounds: Bounds,
     padding: i32,
     displacement: i32,
-    children: Vec<Widget<'a>>,
+    children: Vec<Widget<State>>,
 }
 
-pub struct ReversedScrollBoxContainerBuilder<'a, 'b> {
+pub struct ReversedScrollBoxContainerBuilder<'a, State> {
     style: Style,
-    handle: &'b RaylibHandle,
+    handle: &'a RaylibHandle,
     bounds: Bounds,
     padding: i32,
     displacement: i32,
-    children: Vec<Widget<'a>>,
+    children: Vec<Widget<State>>,
 }
-impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
+impl<'a, State> HorizontalContainerBuilder<'a, State> {
     pub fn get_style(&self) -> Style {
         self.style
     }
 
     pub fn new(
-        handle: &'b RaylibHandle,
+        handle: &'a RaylibHandle,
         x: i32,
         y: i32,
         width: i32,
@@ -1398,8 +1529,13 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
         &mut self,
         width: i32,
         height: i32,
-        to_render: impl FnMut(Bounds, &mut CommandBufferBuilder, &mut RaylibHandle, &RaylibThread)
-        + 'static,
+        to_render: impl FnMut(
+            Bounds,
+            &mut State,
+            &mut CommandBufferBuilder,
+            &mut RaylibHandle,
+            &RaylibThread,
+        ) + 'static,
     ) {
         let w = Widget::Canvas {
             bounds: Bounds {
@@ -1408,6 +1544,7 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
                 width,
                 height,
             },
+            style: self.style,
             to_run: Arc::new(Mutex::new(Box::new(to_render))),
         };
         self.children.push(w);
@@ -1477,7 +1614,7 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
         text: &str,
         text_height: i32,
         width: i32,
-        on_click: impl FnMut() + 'a,
+        on_click: impl FnMut(&mut State) + 'static,
     ) {
         let w = width;
         let x0 = self.bounds.x + self.bounds.width + self.padding;
@@ -1512,7 +1649,12 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
         self.children.push(b);
     }
 
-    pub fn button_image(&mut self, image: Arc<Texture2D>, width: i32, on_click: impl FnMut() + 'a) {
+    pub fn button_image(
+        &mut self,
+        image: Arc<Texture2D>,
+        width: i32,
+        on_click: impl FnMut(&mut State) + 'static,
+    ) {
         let w = width;
         let x0 = self.bounds.x + self.padding + self.bounds.width;
         let y0 = self.bounds.y + self.padding;
@@ -1545,7 +1687,7 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
         self.children.push(b);
     }
 
-    pub fn container(&mut self, width: i32, child: impl FnOnce(&mut ContainerBuilder<'a, 'b>)) {
+    pub fn container(&mut self, width: i32, child: impl FnOnce(&mut ContainerBuilder<'a, State>)) {
         let mut cloned = ContainerBuilder {
             style: self.style,
             handle: self.handle,
@@ -1569,7 +1711,7 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
 
     pub fn horizontal_container(
         &mut self,
-        child: impl FnOnce(&mut HorizontalContainerBuilder<'a, 'b>),
+        child: impl FnOnce(&mut HorizontalContainerBuilder<'a, State>),
     ) {
         let mut cloned = HorizontalContainerBuilder {
             handle: self.handle,
@@ -1595,8 +1737,8 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
         &mut self,
         width: i32,
         height: i32,
-        scroll_amount: &'a mut f32,
-        child: impl FnOnce(&mut ScrollBoxContainerBuilder<'a, 'b>),
+        scroll_amount: &ScrollBoxData,
+        child: impl FnOnce(&mut ScrollBoxContainerBuilder<'a, State>),
     ) {
         let mut cloned = ScrollBoxContainerBuilder {
             handle: self.handle,
@@ -1624,8 +1766,8 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
         &mut self,
         width: i32,
         height: i32,
-        scroll_amount: &'a mut f32,
-        child: impl FnOnce(&mut ReversedScrollBoxContainerBuilder<'a, 'b>),
+        scroll_amount: &ScrollBoxData,
+        child: impl FnOnce(&mut ReversedScrollBoxContainerBuilder<'a, State>),
     ) {
         let mut cloned = ReversedScrollBoxContainerBuilder {
             handle: self.handle,
@@ -1699,7 +1841,7 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
         self.children.push(b);
     }
 
-    pub fn build(self) -> Widget<'a> {
+    pub fn build(self) -> Widget<State> {
         Widget::Container {
             bounds: self.bounds,
             style: self.style,
@@ -1709,7 +1851,7 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
     pub fn with_style(
         &mut self,
         style: Style,
-        to_run: impl FnOnce(&mut HorizontalContainerBuilder<'a, 'b>),
+        to_run: impl FnOnce(&mut HorizontalContainerBuilder<'a, State>),
     ) {
         let old_style = self.style;
         self.style = style;
@@ -1717,11 +1859,21 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
         self.style = old_style;
     }
 
-    pub fn button_1(&mut self, text: impl AsRef<str>, width: i32, on_click: impl FnMut() + 'a) {
+    pub fn button_1(
+        &mut self,
+        text: impl AsRef<str>,
+        width: i32,
+        on_click: impl FnMut(&mut State) + 'static,
+    ) {
         self.button(text.as_ref(), self.style.paragraph_height, width, on_click);
     }
 
-    pub fn button_2(&mut self, text: impl AsRef<str>, width: i32, on_click: impl FnMut() + 'a) {
+    pub fn button_2(
+        &mut self,
+        text: impl AsRef<str>,
+        width: i32,
+        on_click: impl FnMut(&mut State) + 'static,
+    ) {
         self.button(
             text.as_ref(),
             self.style.paragraph_height - 4,
@@ -1730,7 +1882,12 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
         );
     }
 
-    pub fn button_3(&mut self, text: impl AsRef<str>, width: i32, on_click: impl FnMut() + 'a) {
+    pub fn button_3(
+        &mut self,
+        text: impl AsRef<str>,
+        width: i32,
+        on_click: impl FnMut(&mut State) + 'static,
+    ) {
         self.button(
             text.as_ref(),
             self.style.paragraph_height - 8,
@@ -1739,7 +1896,12 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
         );
     }
 
-    pub fn button_4(&mut self, text: impl AsRef<str>, width: i32, on_click: impl FnMut() + 'a) {
+    pub fn button_4(
+        &mut self,
+        text: impl AsRef<str>,
+        width: i32,
+        on_click: impl FnMut(&mut State) + 'static,
+    ) {
         self.button(
             text.as_ref(),
             self.style.paragraph_height - 12,
@@ -1748,25 +1910,18 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
         );
     }
 
-    pub fn text_input(
-        &mut self,
-        text: &'a mut String,
-        text_height: i32,
-        width: i32,
-        height: i32,
-        selected: &'a mut bool,
-        output: &'a mut Option<String>,
-    ) {
+    pub fn text_input(&mut self, text_height: i32, width: i32, height: i32, data: &TextBoxData) {
         let w = width;
         let x0 = self.bounds.x + self.bounds.width + self.padding;
         let y0 = self.bounds.y + self.padding;
-        let split = split_text(text, self.handle, w, text_height);
+        let split = split_text(&*data.text.borrow(), self.handle, w, text_height);
         let tmp = height + self.padding * 2;
         if tmp > self.bounds.height {
             self.bounds.height = tmp;
         }
         self.bounds.width += width + self.padding * 2;
         self.children.push(Widget::TextInput {
+            data: data.clone(),
             style: self.style,
             text_height,
             bounds: Bounds {
@@ -1776,16 +1931,13 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
                 height,
             },
             split,
-            text,
-            output,
-            is_selected: selected,
         });
     }
 }
 
-impl<'a, 'b> ContainerBuilder<'a, 'b> {
+impl<'a, State> ContainerBuilder<'a, State> {
     pub fn new(
-        handle: &'b RaylibHandle,
+        handle: &'a RaylibHandle,
         x: i32,
         y: i32,
         width: i32,
@@ -1831,18 +1983,11 @@ impl<'a, 'b> ContainerBuilder<'a, 'b> {
         });
     }
 
-    pub fn text_input(
-        &mut self,
-        text: &'a mut String,
-        text_height: i32,
-        height: i32,
-        selected: &'a mut bool,
-        output: &'a mut Option<String>,
-    ) {
+    pub fn text_input(&mut self, data: &TextBoxData, text_height: i32, height: i32) {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
         let y0 = self.bounds.y + self.bounds.height + self.padding;
-        let split = split_text(text, self.handle, w, text_height);
+        let split = split_text(&*data.text.borrow(), self.handle, w, text_height);
         self.bounds.height += height + self.padding;
         self.children.push(Widget::TextInput {
             style: self.style,
@@ -1854,13 +1999,16 @@ impl<'a, 'b> ContainerBuilder<'a, 'b> {
                 height,
             },
             split,
-            text,
-            output,
-            is_selected: selected,
+            data: data.clone(),
         });
     }
 
-    pub fn button(&mut self, text: &str, text_height: i32, on_click: impl FnMut() + 'a) {
+    pub fn button(
+        &mut self,
+        text: &str,
+        text_height: i32,
+        on_click: impl FnMut(&mut State) + 'static,
+    ) {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
         let y0 = self.bounds.y + self.bounds.height + self.padding;
@@ -1891,23 +2039,27 @@ impl<'a, 'b> ContainerBuilder<'a, 'b> {
         self.children.push(b);
     }
 
-    pub fn button_1(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+    pub fn button_1(&mut self, text: impl AsRef<str>, on_click: impl FnMut(&mut State) + 'static) {
         self.button(text.as_ref(), self.style.paragraph_height, on_click);
     }
 
-    pub fn button_2(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+    pub fn button_2(&mut self, text: impl AsRef<str>, on_click: impl FnMut(&mut State) + 'static) {
         self.button(text.as_ref(), self.style.paragraph_height - 4, on_click);
     }
 
-    pub fn button_3(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+    pub fn button_3(&mut self, text: impl AsRef<str>, on_click: impl FnMut(&mut State) + 'static) {
         self.button(text.as_ref(), self.style.paragraph_height - 8, on_click);
     }
 
-    pub fn button_4(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+    pub fn button_4(&mut self, text: impl AsRef<str>, on_click: impl FnMut(&mut State) + 'static) {
         self.button(text.as_ref(), self.style.paragraph_height - 12, on_click);
     }
 
-    pub fn button_image(&mut self, image: Arc<Texture2D>, on_click: impl FnMut() + 'a) {
+    pub fn button_image(
+        &mut self,
+        image: Arc<Texture2D>,
+        on_click: impl FnMut(&mut State) + 'static,
+    ) {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
         let y0 = self.bounds.y + self.bounds.height + self.padding;
@@ -1937,7 +2089,7 @@ impl<'a, 'b> ContainerBuilder<'a, 'b> {
         self.children.push(b);
     }
 
-    pub fn container(&mut self, child: impl FnOnce(&mut ContainerBuilder<'a, 'b>)) {
+    pub fn container(&mut self, child: impl FnOnce(&mut ContainerBuilder<'a, State>)) {
         let mut cloned = ContainerBuilder {
             style: self.style,
             handle: self.handle,
@@ -1957,7 +2109,7 @@ impl<'a, 'b> ContainerBuilder<'a, 'b> {
 
     pub fn horizontal_container(
         &mut self,
-        child: impl FnOnce(&mut HorizontalContainerBuilder<'a, 'b>),
+        child: impl FnOnce(&mut HorizontalContainerBuilder<'a, State>),
     ) {
         let mut cloned = HorizontalContainerBuilder {
             style: self.style,
@@ -1979,8 +2131,8 @@ impl<'a, 'b> ContainerBuilder<'a, 'b> {
     pub fn scroll_box(
         &mut self,
         height: i32,
-        scroll_amount: &'a mut f32,
-        child: impl FnOnce(&mut ScrollBoxContainerBuilder<'a, 'b>),
+        scroll_amount: &ScrollBoxData,
+        child: impl FnOnce(&mut ScrollBoxContainerBuilder<'a, State>),
     ) {
         let mut cloned = ScrollBoxContainerBuilder {
             style: self.style,
@@ -2003,8 +2155,8 @@ impl<'a, 'b> ContainerBuilder<'a, 'b> {
     pub fn scroll_box_rev(
         &mut self,
         height: i32,
-        scroll_amount: &'a mut f32,
-        child: impl FnOnce(&mut ReversedScrollBoxContainerBuilder<'a, 'b>),
+        scroll_amount: &ScrollBoxData,
+        child: impl FnOnce(&mut ReversedScrollBoxContainerBuilder<'a, State>),
     ) {
         let mut cloned = ReversedScrollBoxContainerBuilder {
             style: self.style,
@@ -2066,7 +2218,7 @@ impl<'a, 'b> ContainerBuilder<'a, 'b> {
         self.children.push(b);
     }
 
-    pub fn build(mut self) -> Widget<'a> {
+    pub fn build(mut self) -> Widget<State> {
         self.bounds.height += self.padding;
         Widget::Container {
             style: self.style,
@@ -2106,7 +2258,11 @@ impl<'a, 'b> ContainerBuilder<'a, 'b> {
         self.text(text.as_ref(), self.style.paragraph_height - 12);
     }
 
-    pub fn with_style(&mut self, style: Style, to_run: impl FnOnce(&mut ContainerBuilder<'a, 'b>)) {
+    pub fn with_style(
+        &mut self,
+        style: Style,
+        to_run: impl FnOnce(&mut ContainerBuilder<'a, State>),
+    ) {
         let old_style = self.style;
         self.style = style;
         to_run(self);
@@ -2116,8 +2272,13 @@ impl<'a, 'b> ContainerBuilder<'a, 'b> {
     pub fn canvas(
         &mut self,
         height: i32,
-        to_render: impl FnMut(Bounds, &mut CommandBufferBuilder, &mut RaylibHandle, &RaylibThread)
-        + 'static,
+        to_render: impl FnMut(
+            Bounds,
+            &mut State,
+            &mut CommandBufferBuilder,
+            &mut RaylibHandle,
+            &RaylibThread,
+        ) + 'static,
     ) {
         let w = Widget::Canvas {
             bounds: Bounds {
@@ -2126,16 +2287,18 @@ impl<'a, 'b> ContainerBuilder<'a, 'b> {
                 width: self.bounds.width - self.padding * 2,
                 height,
             },
+            style: self.style,
             to_run: Arc::new(Mutex::new(Box::new(to_render))),
         };
+
         self.children.push(w);
         self.bounds.height += height + self.padding * 2;
     }
 }
 
-impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
+impl<'a, State> ScrollBoxContainerBuilder<'a, State> {
     pub fn new(
-        handle: &'b RaylibHandle,
+        handle: &'a RaylibHandle,
         x: i32,
         y: i32,
         width: i32,
@@ -2182,23 +2345,16 @@ impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
         });
     }
 
-    pub fn text_input(
-        &mut self,
-        text: &'a mut String,
-        text_height: i32,
-        height: i32,
-        selected: &'a mut bool,
-        output: &'a mut Option<String>,
-    ) {
+    pub fn text_input(&mut self, data: &TextBoxData, text_height: i32, height: i32) {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
         let y0 = self.displacement + self.padding;
-        let split = split_text(text, self.handle, w, text_height);
+        let split = split_text(&*data.text.borrow(), self.handle, w, text_height);
         self.displacement += height + self.padding;
         self.children.push(Widget::TextInput {
             style: self.style,
             text_height,
-            text,
+            data: data.clone(),
             bounds: Bounds {
                 x: x0,
                 y: y0,
@@ -2206,12 +2362,15 @@ impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
                 height,
             },
             split,
-            is_selected: selected,
-            output,
         });
     }
 
-    pub fn button(&mut self, text: &str, text_height: i32, on_click: impl FnMut() + 'a) {
+    pub fn button(
+        &mut self,
+        text: &str,
+        text_height: i32,
+        on_click: impl FnMut(&mut State) + 'static,
+    ) {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
         let y0 = self.displacement + self.padding;
@@ -2242,7 +2401,11 @@ impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
         self.children.push(b);
     }
 
-    pub fn button_image(&mut self, image: Arc<Texture2D>, on_click: impl FnMut() + 'a) {
+    pub fn button_image(
+        &mut self,
+        image: Arc<Texture2D>,
+        on_click: impl FnMut(&mut State) + 'static,
+    ) {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
         let y0 = self.displacement + self.padding;
@@ -2272,7 +2435,7 @@ impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
         self.children.push(b);
     }
 
-    pub fn container(&mut self, child: impl FnOnce(&mut ContainerBuilder<'a, 'b>)) {
+    pub fn container(&mut self, child: impl FnOnce(&mut ContainerBuilder<'a, State>)) {
         let mut cloned = ContainerBuilder {
             style: self.style,
             handle: self.handle,
@@ -2292,9 +2455,9 @@ impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
 
     pub fn scroll_box(
         &mut self,
-        scroll_amount: &'a mut f32,
+        scroll_amount: &ScrollBoxData,
         height: i32,
-        child: impl FnOnce(&mut ScrollBoxContainerBuilder<'a, 'b>),
+        child: impl FnOnce(&mut ScrollBoxContainerBuilder<'a, State>),
     ) {
         let mut cloned = ScrollBoxContainerBuilder {
             style: self.style,
@@ -2315,9 +2478,9 @@ impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
     }
     pub fn scroll_box_rev(
         &mut self,
-        scroll_amount: &'a mut f32,
+        scroll_amount: &ScrollBoxData,
         height: i32,
-        child: impl FnOnce(&mut ReversedScrollBoxContainerBuilder<'a, 'b>),
+        child: impl FnOnce(&mut ReversedScrollBoxContainerBuilder<'a, State>),
     ) {
         let mut cloned = ReversedScrollBoxContainerBuilder {
             style: self.style,
@@ -2339,7 +2502,7 @@ impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
 
     pub fn horizontal_container(
         &mut self,
-        child: impl FnOnce(&mut HorizontalContainerBuilder<'a, 'b>),
+        child: impl FnOnce(&mut HorizontalContainerBuilder<'a, State>),
     ) {
         let mut cloned = HorizontalContainerBuilder {
             style: self.style,
@@ -2400,9 +2563,9 @@ impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
         self.children.push(b);
     }
 
-    pub fn build(mut self, scroll_amount: &'a mut f32) -> Widget<'a> {
+    pub fn build(mut self, scroll_amount: &ScrollBoxData) -> Widget<State> {
         let offset = ((self.displacement - self.bounds.height - self.padding * 2) as f32
-            * -*scroll_amount) as i32
+            * -*scroll_amount.value.borrow()) as i32
             + self.style.paragraph_height * 3;
         let base = Point { x: 0, y: 0 };
         let offset = Point { x: 0, y: offset };
@@ -2413,7 +2576,7 @@ impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
             bounds: self.bounds,
             style: self.style,
             children: self.children,
-            scroll_amount,
+            scroll_amount: scroll_amount.clone(),
         }
     }
 
@@ -2451,7 +2614,7 @@ impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
     pub fn with_style(
         &mut self,
         style: Style,
-        to_run: impl FnOnce(&mut ScrollBoxContainerBuilder<'a, 'b>),
+        to_run: impl FnOnce(&mut ScrollBoxContainerBuilder<'a, State>),
     ) {
         let old_style = self.style;
         self.style = style;
@@ -2459,26 +2622,31 @@ impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
         self.style = old_style;
     }
 
-    pub fn button_1(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+    pub fn button_1(&mut self, text: impl AsRef<str>, on_click: impl FnMut(&mut State) + 'static) {
         self.button(text.as_ref(), self.style.paragraph_height, on_click);
     }
 
-    pub fn button_2(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+    pub fn button_2(&mut self, text: impl AsRef<str>, on_click: impl FnMut(&mut State) + 'static) {
         self.button(text.as_ref(), self.style.paragraph_height - 4, on_click);
     }
 
-    pub fn button_3(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+    pub fn button_3(&mut self, text: impl AsRef<str>, on_click: impl FnMut(&mut State) + 'static) {
         self.button(text.as_ref(), self.style.paragraph_height - 8, on_click);
     }
 
-    pub fn button_4(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+    pub fn button_4(&mut self, text: impl AsRef<str>, on_click: impl FnMut(&mut State) + 'static) {
         self.button(text.as_ref(), self.style.paragraph_height - 12, on_click);
     }
     pub fn canvas(
         &mut self,
         height: i32,
-        to_render: impl FnMut(Bounds, &mut CommandBufferBuilder, &mut RaylibHandle, &RaylibThread)
-        + 'static,
+        to_render: impl FnMut(
+            Bounds,
+            &mut State,
+            &mut CommandBufferBuilder,
+            &mut RaylibHandle,
+            &RaylibThread,
+        ) + 'static,
     ) {
         let w = Widget::Canvas {
             bounds: Bounds {
@@ -2487,6 +2655,7 @@ impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
                 width: self.bounds.width - self.padding * 2,
                 height,
             },
+            style: self.style,
             to_run: Arc::new(Mutex::new(Box::new(to_render))),
         };
         self.children.push(w);
@@ -2494,9 +2663,9 @@ impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
     }
 }
 
-impl<'a, 'b> ReversedScrollBoxContainerBuilder<'a, 'b> {
+impl<'a, State> ReversedScrollBoxContainerBuilder<'a, State> {
     pub fn new(
-        handle: &'b RaylibHandle,
+        handle: &'a RaylibHandle,
         x: i32,
         y: i32,
         width: i32,
@@ -2543,18 +2712,11 @@ impl<'a, 'b> ReversedScrollBoxContainerBuilder<'a, 'b> {
         });
     }
 
-    pub fn text_input(
-        &mut self,
-        text: &'a mut String,
-        text_height: i32,
-        height: i32,
-        selected: &'a mut bool,
-        output: &'a mut Option<String>,
-    ) {
+    pub fn text_input(&mut self, data: &TextBoxData, text_height: i32, height: i32) {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
         let y0 = self.displacement + self.padding;
-        let split = split_text(text, self.handle, w, text_height);
+        let split = split_text(&*data.text.borrow(), self.handle, w, text_height);
         self.displacement += height + self.padding;
         self.children.push(Widget::TextInput {
             style: self.style,
@@ -2565,14 +2727,17 @@ impl<'a, 'b> ReversedScrollBoxContainerBuilder<'a, 'b> {
                 width: w,
                 height,
             },
-            text,
             split,
-            is_selected: selected,
-            output,
+            data: data.clone(),
         });
     }
 
-    pub fn button(&mut self, text: &str, text_height: i32, on_click: impl FnMut() + 'a) {
+    pub fn button(
+        &mut self,
+        text: &str,
+        text_height: i32,
+        on_click: impl FnMut(&mut State) + 'static,
+    ) {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
         let y0 = self.displacement + self.padding;
@@ -2603,7 +2768,11 @@ impl<'a, 'b> ReversedScrollBoxContainerBuilder<'a, 'b> {
         self.children.push(b);
     }
 
-    pub fn button_image(&mut self, image: Arc<Texture2D>, on_click: impl FnMut() + 'a) {
+    pub fn button_image(
+        &mut self,
+        image: Arc<Texture2D>,
+        on_click: impl FnMut(&mut State) + 'static,
+    ) {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
         let y0 = self.displacement + self.padding;
@@ -2633,7 +2802,7 @@ impl<'a, 'b> ReversedScrollBoxContainerBuilder<'a, 'b> {
         self.children.push(b);
     }
 
-    pub fn container(&mut self, child: impl FnOnce(&mut ContainerBuilder<'a, 'b>)) {
+    pub fn container(&mut self, child: impl FnOnce(&mut ContainerBuilder<'a, State>)) {
         let mut cloned = ContainerBuilder {
             style: self.style,
             handle: self.handle,
@@ -2653,9 +2822,9 @@ impl<'a, 'b> ReversedScrollBoxContainerBuilder<'a, 'b> {
 
     pub fn scroll_box(
         &mut self,
-        scroll_amount: &'a mut f32,
+        scroll_amount: &ScrollBoxData,
         height: i32,
-        child: impl FnOnce(&mut ScrollBoxContainerBuilder<'a, 'b>),
+        child: impl FnOnce(&mut ScrollBoxContainerBuilder<'a, State>),
     ) {
         let mut cloned = ScrollBoxContainerBuilder {
             style: self.style,
@@ -2677,9 +2846,9 @@ impl<'a, 'b> ReversedScrollBoxContainerBuilder<'a, 'b> {
 
     pub fn scroll_box_rev(
         &mut self,
-        scroll_amount: &'a mut f32,
+        scroll_amount: &ScrollBoxData,
         height: i32,
-        child: impl FnOnce(&mut ReversedScrollBoxContainerBuilder<'a, 'b>),
+        child: impl FnOnce(&mut ReversedScrollBoxContainerBuilder<'a, State>),
     ) {
         let mut cloned = ReversedScrollBoxContainerBuilder {
             style: self.style,
@@ -2700,7 +2869,7 @@ impl<'a, 'b> ReversedScrollBoxContainerBuilder<'a, 'b> {
     }
     pub fn horizontal_container(
         &mut self,
-        child: impl FnOnce(&mut HorizontalContainerBuilder<'a, 'b>),
+        child: impl FnOnce(&mut HorizontalContainerBuilder<'a, State>),
     ) {
         let mut cloned = HorizontalContainerBuilder {
             style: self.style,
@@ -2761,8 +2930,9 @@ impl<'a, 'b> ReversedScrollBoxContainerBuilder<'a, 'b> {
         self.children.push(b);
     }
 
-    pub fn build(mut self, scroll_amount: &'a mut f32) -> Widget<'a> {
-        let offset = ((self.displacement - self.bounds.height) as f32 * (*scroll_amount)) as i32
+    pub fn build(mut self, scroll_amount: &ScrollBoxData) -> Widget<State> {
+        let offset = ((self.displacement - self.bounds.height) as f32
+            * (*scroll_amount.value.borrow())) as i32
             + self.bounds.height
             - self.displacement
             + self.style.paragraph_height * 2
@@ -2776,7 +2946,7 @@ impl<'a, 'b> ReversedScrollBoxContainerBuilder<'a, 'b> {
             bounds: self.bounds,
             style: self.style,
             children: self.children,
-            scroll_amount,
+            scroll_amount: scroll_amount.clone(),
         }
     }
 
@@ -2814,7 +2984,7 @@ impl<'a, 'b> ReversedScrollBoxContainerBuilder<'a, 'b> {
     pub fn with_style(
         &mut self,
         style: Style,
-        to_run: impl FnOnce(&mut ReversedScrollBoxContainerBuilder<'a, 'b>),
+        to_run: impl FnOnce(&mut ReversedScrollBoxContainerBuilder<'a, State>),
     ) {
         let old_style = self.style;
         self.style = style;
@@ -2822,27 +2992,32 @@ impl<'a, 'b> ReversedScrollBoxContainerBuilder<'a, 'b> {
         self.style = old_style;
     }
 
-    pub fn button_1(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+    pub fn button_1(&mut self, text: impl AsRef<str>, on_click: impl FnMut(&mut State) + 'static) {
         self.button(text.as_ref(), self.style.paragraph_height, on_click);
     }
 
-    pub fn button_2(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+    pub fn button_2(&mut self, text: impl AsRef<str>, on_click: impl FnMut(&mut State) + 'static) {
         self.button(text.as_ref(), self.style.paragraph_height - 4, on_click);
     }
 
-    pub fn button_3(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+    pub fn button_3(&mut self, text: impl AsRef<str>, on_click: impl FnMut(&mut State) + 'static) {
         self.button(text.as_ref(), self.style.paragraph_height - 8, on_click);
     }
 
-    pub fn button_4(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+    pub fn button_4(&mut self, text: impl AsRef<str>, on_click: impl FnMut(&mut State) + 'static) {
         self.button(text.as_ref(), self.style.paragraph_height - 12, on_click);
     }
 
     pub fn canvas(
         &mut self,
         height: i32,
-        to_render: impl FnMut(Bounds, &mut CommandBufferBuilder, &mut RaylibHandle, &RaylibThread)
-        + 'static,
+        to_render: impl FnMut(
+            Bounds,
+            &mut State,
+            &mut CommandBufferBuilder,
+            &mut RaylibHandle,
+            &RaylibThread,
+        ) + 'static,
     ) {
         let w = Widget::Canvas {
             bounds: Bounds {
@@ -2852,7 +3027,9 @@ impl<'a, 'b> ReversedScrollBoxContainerBuilder<'a, 'b> {
                 height,
             },
             to_run: Arc::new(Mutex::new(Box::new(to_render))),
+            style: self.style,
         };
+
         self.children.push(w);
         self.displacement += height + self.padding * 2;
     }
@@ -2900,10 +3077,10 @@ pub fn split_text(
     out
 }
 
-pub struct GUI<'a> {
+pub struct GUI<'a, State> {
     actual_dimension_x: i32,
     actual_dimension_y: i32,
-    widgets: Vec<Widget<'a>>,
+    widgets: Vec<Widget<State>>,
     handle: &'a mut RaylibHandle,
     thread: &'a RaylibThread,
     style: Style,
@@ -2930,8 +3107,8 @@ impl Style {
     }
 }
 
-impl<'a> GUI<'a> {
-    pub fn new(handle: &'a mut RaylibHandle, thread: &'a RaylibThread) -> Self {
+impl<'a, State> GUI<'a, State> {
+    pub fn new(_state: &State, handle: &'a mut RaylibHandle, thread: &'a RaylibThread) -> Self {
         let dx = handle.get_screen_width();
         let dy = handle.get_screen_height();
         Self {
@@ -2949,9 +3126,9 @@ impl<'a> GUI<'a> {
         x: i32,
         y: i32,
         width: i32,
-        to_run: impl FnOnce(&mut ContainerBuilder<'a, 'b>),
+        to_run: impl FnOnce(&mut ContainerBuilder<'b, State>),
     ) {
-        let mut x: ContainerBuilder<'a, 'b> =
+        let mut x: ContainerBuilder<'b, State> =
             ContainerBuilder::new(self.handle, x, y, width, 0, self.style.padding, self.style);
         to_run(&mut x);
         let mut y = x.build();
@@ -2964,9 +3141,9 @@ impl<'a> GUI<'a> {
         x: i32,
         y: i32,
         height: i32,
-        to_run: impl FnOnce(&mut HorizontalContainerBuilder<'a, 'b>),
+        to_run: impl FnOnce(&mut HorizontalContainerBuilder<'b, State>),
     ) {
-        let mut x: HorizontalContainerBuilder<'a, 'b> = HorizontalContainerBuilder::new(
+        let mut x: HorizontalContainerBuilder<'b, State> = HorizontalContainerBuilder::new(
             self.handle,
             x,
             y,
@@ -2987,10 +3164,10 @@ impl<'a> GUI<'a> {
         y: i32,
         width: i32,
         height: i32,
-        scroll_amount: &'a mut f32,
-        to_run: impl FnOnce(&mut ScrollBoxContainerBuilder<'a, 'b>),
+        scroll_amount: &ScrollBoxData,
+        to_run: impl FnOnce(&mut ScrollBoxContainerBuilder<'b, State>),
     ) {
-        let mut x: ScrollBoxContainerBuilder<'a, 'b> = ScrollBoxContainerBuilder::new(
+        let mut x: ScrollBoxContainerBuilder<'b, State> = ScrollBoxContainerBuilder::new(
             self.handle,
             x,
             y,
@@ -3005,30 +3182,30 @@ impl<'a> GUI<'a> {
         self.widgets.push(y);
     }
 
-    pub fn render_commands(&mut self) -> CommandBuffer {
+    pub fn render_commands(&mut self, state: &mut State) -> CommandBuffer {
         let mut cmds = CommandBufferBuilder::new();
         cmds.clear_background(self.style.background_color);
         for i in &mut self.widgets {
-            i.render(self.handle, self.thread, &mut cmds);
+            i.render(state, self.handle, self.thread, &mut cmds);
         }
         cmds.build()
     }
 
-    pub fn render(&mut self) {
-        let mut cmds = self.render_commands();
+    pub fn render(&mut self, state: &mut State) {
+        let mut cmds = self.render_commands(state);
         cmds.run(self.handle, self.thread);
     }
 
-    pub fn render_fps(&mut self) {
-        let mut cmds = self.render_commands();
+    pub fn render_fps(&mut self, state: &mut State) {
+        let mut cmds = self.render_commands(state);
         cmds.run_fps(self.handle, self.thread);
     }
 
     pub fn centered_horizontal<'b>(
         &'b mut self,
-        to_run: impl FnOnce(&mut HorizontalContainerBuilder<'a, 'b>),
+        to_run: impl FnOnce(&mut HorizontalContainerBuilder<'b, State>),
     ) {
-        let mut x: HorizontalContainerBuilder<'a, 'b> = HorizontalContainerBuilder::new(
+        let mut x: HorizontalContainerBuilder<'b, State> = HorizontalContainerBuilder::new(
             self.handle,
             0,
             0,
