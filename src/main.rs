@@ -33,7 +33,7 @@ async fn main() {
             });
             cmds.container(600, |cmds| {
                 cmds.text("list", 16);
-                cmds.scroll_box(600, &mut scroll_amnt, |cmds| {
+                cmds.scroll_box(900, &mut scroll_amnt, |cmds| {
                     let count = *counter.borrow();
                     for i in 0..count {
                         cmds.text(&format!("{}", i), 16);

@@ -987,6 +987,7 @@ pub struct ContainerBuilder<'a, 'b> {
     padding: i32,
     children: Vec<Widget<'a>>,
 }
+
 pub struct HorizontalContainerBuilder<'a, 'b> {
     style: Style,
     handle: &'b RaylibHandle,
