@@ -9,7 +9,6 @@ use raylib::{
         RaylibTextureModeExt,
     },
     shaders::Shader,
-    text::RaylibFont,
     texture::{RaylibTexture2D, RenderTexture2D, Texture2D},
 };
 
@@ -119,7 +118,103 @@ pub enum DrawCommand {
         color: Color,
     },
 }
-
+impl DrawCommand {
+    pub fn set_origin(&mut self, point: Point) {
+        match self {
+            DrawCommand::Shader { shader, commands } => {
+                for i in commands {
+                    i.set_origin(point);
+                }
+            }
+            DrawCommand::MutateShader {
+                shader: _,
+                function: _,
+            } => {}
+            DrawCommand::Scissor { children, bounds } => {
+                bounds.x += point.x;
+                bounds.y += point.y;
+                for i in children {
+                    i.set_origin(point);
+                }
+            }
+            DrawCommand::DrawRectangle { color: _, bounds } => {
+                bounds.x += point.x;
+                bounds.y += point.y;
+            }
+            DrawCommand::DrawText {
+                pos_x,
+                pos_y,
+                text_height: _,
+                color: _,
+                text: _,
+            } => {
+                *pos_x += point.x;
+                *pos_y += point.y;
+            }
+            DrawCommand::ClearBackground { color: _ } => {}
+            DrawCommand::DrawTexture {
+                image: _,
+                bounds,
+                rotation: _,
+                tint: _,
+            } => {
+                bounds.x += point.x;
+                bounds.y += point.y;
+            }
+            DrawCommand::DrawRenderTexture {
+                image: _,
+                bounds,
+                rotation: _,
+                tint: _,
+            } => {
+                bounds.x += point.x;
+                bounds.y += point.y;
+            }
+            DrawCommand::DrawCircle {
+                x,
+                y,
+                r: _,
+                color: _,
+            } => {
+                *x += point.x;
+                *y += point.y;
+            }
+            DrawCommand::DrawLine {
+                x0,
+                y0,
+                x1,
+                y1,
+                width: _,
+                color: _,
+            } => {
+                *x0 += point.x;
+                *x1 += point.x;
+                *y0 += point.y;
+                *y1 += point.y;
+            }
+            DrawCommand::DrawPointsLines {
+                points,
+                width: _,
+                color: _,
+            } => {
+                for i in points {
+                    i.x += point.x;
+                    i.y += point.y;
+                }
+            }
+            DrawCommand::DrawPoints {
+                points,
+                radii: _,
+                color: _,
+            } => {
+                for i in points {
+                    i.x += point.x;
+                    i.y += point.y;
+                }
+            }
+        }
+    }
+}
 #[derive(Clone)]
 pub struct CommandBuffer {
     render_texture_calls: Vec<RenderTextureCmdBuffer>,
@@ -378,28 +473,39 @@ impl CommandBufferBuilder {
 }
 
 impl CommandBuffer {
-    pub fn run(self, handle: &mut RaylibHandle, thread: &RaylibThread) {
-        for i in self.render_texture_calls {
+    pub fn set_origin(&mut self, point: Point) {
+        for i in &mut self.calls {
+            i.set_origin(point);
+        }
+    }
+
+    pub fn run(&mut self, handle: &mut RaylibHandle, thread: &RaylibThread) {
+        for i in &mut self.render_texture_calls {
             Self::run_render_cmd(i, handle, thread);
         }
         let mut draw = handle.begin_drawing(thread);
-        for i in self.calls {
+        for i in &mut self.calls {
             Self::run_command(i, &mut draw, thread);
         }
     }
 
-    pub fn run_fps(self, handle: &mut RaylibHandle, thread: &RaylibThread) {
+    pub fn run_fps(&mut self, handle: &mut RaylibHandle, thread: &RaylibThread) {
         let w = handle.get_screen_width();
-        for i in self.render_texture_calls {
+        for i in &mut self.render_texture_calls {
             Self::run_render_cmd(i, handle, thread);
         }
         let mut draw = handle.begin_drawing(thread);
-        for i in self.calls {
+        for i in &mut self.calls {
             Self::run_command(i, &mut draw, thread);
         }
         draw.draw_fps(w - 100, 100);
     }
-    pub fn run_command(cmd: DrawCommand, handle: &mut RaylibDrawHandle, thread: &RaylibThread) {
+
+    pub fn run_command(
+        cmd: &mut DrawCommand,
+        handle: &mut RaylibDrawHandle,
+        thread: &RaylibThread,
+    ) {
         match cmd {
             DrawCommand::Shader { shader, commands } => {
                 let mut guard = shader.lock().unwrap();
@@ -421,7 +527,7 @@ impl CommandBuffer {
                 }
             }
             DrawCommand::DrawRectangle { color, bounds } => {
-                handle.draw_rectangle(bounds.x, bounds.y, bounds.width, bounds.height, color);
+                handle.draw_rectangle(bounds.x, bounds.y, bounds.width, bounds.height, *color);
             }
             DrawCommand::DrawText {
                 pos_x,
@@ -430,10 +536,10 @@ impl CommandBuffer {
                 color,
                 text,
             } => {
-                handle.draw_text(&text, pos_x, pos_y, text_height, color);
+                handle.draw_text(&text, *pos_x, *pos_y, *text_height, *color);
             }
             DrawCommand::ClearBackground { color } => {
-                handle.clear_background(color);
+                handle.clear_background(*color);
             }
             DrawCommand::DrawTexture {
                 image,
@@ -442,7 +548,7 @@ impl CommandBuffer {
                 tint,
             } => {
                 handle.draw_texture_pro(
-                    &*image,
+                    &**image,
                     Rectangle {
                         x: 0.0,
                         y: 0.0,
@@ -456,8 +562,8 @@ impl CommandBuffer {
                         height: bounds.height as f32,
                     },
                     Vector2::new(bounds.x as f32, bounds.y as f32),
-                    rotation,
-                    tint,
+                    *rotation,
+                    *tint,
                 );
             }
             DrawCommand::DrawRenderTexture {
@@ -482,12 +588,12 @@ impl CommandBuffer {
                         height: bounds.height as f32,
                     },
                     Vector2::new(bounds.x as f32, bounds.y as f32),
-                    rotation,
-                    tint,
+                    *rotation,
+                    *tint,
                 );
             }
             DrawCommand::DrawCircle { x, y, r, color } => {
-                handle.draw_circle(x, y, r, color);
+                handle.draw_circle(*x, *y, *r, *color);
             }
             DrawCommand::DrawLine {
                 x0,
@@ -498,10 +604,10 @@ impl CommandBuffer {
                 color,
             } => {
                 handle.draw_line_ex(
-                    Vector2::new(x0 as f32, y0 as f32),
-                    Vector2::new(x1 as f32, y1 as f32),
-                    width,
-                    color,
+                    Vector2::new(*x0 as f32, *y0 as f32),
+                    Vector2::new(*x1 as f32, *y1 as f32),
+                    *width,
+                    *color,
                 );
             }
             DrawCommand::DrawPointsLines {
@@ -515,8 +621,8 @@ impl CommandBuffer {
                     handle.draw_line_ex(
                         Vector2::new(x0 as f32, y0 as f32),
                         Vector2::new(x1 as f32, y1 as f32),
-                        width,
-                        color,
+                        *width,
+                        *color,
                     );
                 }
             }
@@ -526,26 +632,26 @@ impl CommandBuffer {
                 color,
             } => {
                 for i in points {
-                    handle.draw_circle(i.x, i.y, radii, color);
+                    handle.draw_circle(i.x, i.y, *radii, *color);
                 }
             }
         }
     }
 
     pub fn run_render_cmd(
-        cmd: RenderTextureCmdBuffer,
+        cmd: &mut RenderTextureCmdBuffer,
         handle: &mut RaylibHandle,
         thread: &RaylibThread,
     ) {
         let mut texture = cmd.texture.lock().unwrap();
         let mut mode = handle.begin_texture_mode(thread, &mut texture);
-        for i in cmd.commands {
+        for i in &mut cmd.commands {
             Self::run_texture_draw_command(i, &mut mode, thread);
         }
     }
 
     pub fn run_texture_draw_command<T>(
-        cmd: DrawCommand,
+        cmd: &mut DrawCommand,
         handle: &mut RaylibTextureMode<'_, T>,
         thread: &RaylibThread,
     ) {
@@ -571,7 +677,7 @@ impl CommandBuffer {
                 }
             }
             DrawCommand::DrawRectangle { color, bounds } => {
-                handle.draw_rectangle(bounds.x, bounds.y, bounds.width, bounds.height, color);
+                handle.draw_rectangle(bounds.x, bounds.y, bounds.width, bounds.height, *color);
             }
             DrawCommand::DrawText {
                 pos_x,
@@ -580,10 +686,10 @@ impl CommandBuffer {
                 color,
                 text,
             } => {
-                handle.draw_text(&text, pos_x, pos_y, text_height, color);
+                handle.draw_text(&text, *pos_x, *pos_y, *text_height, *color);
             }
             DrawCommand::ClearBackground { color } => {
-                handle.clear_background(color);
+                handle.clear_background(*color);
             }
             DrawCommand::DrawTexture {
                 image,
@@ -592,7 +698,7 @@ impl CommandBuffer {
                 tint,
             } => {
                 handle.draw_texture_pro(
-                    &*image,
+                    &**image,
                     Rectangle {
                         x: 0.0,
                         y: 0.0,
@@ -606,8 +712,8 @@ impl CommandBuffer {
                         height: bounds.height as f32,
                     },
                     Vector2::new(bounds.x as f32, bounds.y as f32),
-                    rotation,
-                    tint,
+                    *rotation,
+                    *tint,
                 );
             }
             DrawCommand::DrawRenderTexture {
@@ -632,12 +738,12 @@ impl CommandBuffer {
                         height: bounds.height as f32,
                     },
                     Vector2::new(bounds.x as f32, bounds.y as f32),
-                    rotation,
-                    tint,
+                    *rotation,
+                    *tint,
                 );
             }
             DrawCommand::DrawCircle { x, y, r, color } => {
-                handle.draw_circle(x, y, r, color);
+                handle.draw_circle(*x, *y, *r, *color);
             }
             DrawCommand::DrawLine {
                 x0,
@@ -648,10 +754,10 @@ impl CommandBuffer {
                 color,
             } => {
                 handle.draw_line_ex(
-                    Vector2::new(x0 as f32, y0 as f32),
-                    Vector2::new(x1 as f32, y1 as f32),
-                    width,
-                    color,
+                    Vector2::new(*x0 as f32, *y0 as f32),
+                    Vector2::new(*x1 as f32, *y1 as f32),
+                    *width,
+                    *color,
                 );
             }
             DrawCommand::DrawPointsLines {
@@ -665,8 +771,8 @@ impl CommandBuffer {
                     handle.draw_line_ex(
                         Vector2::new(x0 as f32, y0 as f32),
                         Vector2::new(x1 as f32, y1 as f32),
-                        width,
-                        color,
+                        *width,
+                        *color,
                     );
                 }
             }
@@ -676,7 +782,7 @@ impl CommandBuffer {
                 color,
             } => {
                 for i in points {
-                    handle.draw_circle(i.x, i.y, radii, color);
+                    handle.draw_circle(i.x, i.y, *radii, *color);
                 }
             }
         }
@@ -731,6 +837,23 @@ pub enum Widget<'a> {
         bounds: Bounds,
         on_click: Box<dyn FnMut() + 'a>,
     },
+    Canvas {
+        bounds: Bounds,
+        to_run: Arc<
+            Mutex<
+                Box<dyn FnMut(Bounds, &mut CommandBufferBuilder, &mut RaylibHandle, &RaylibThread)>,
+            >,
+        >,
+    },
+    TextInput {
+        text: &'a mut String,
+        output: &'a mut Option<String>,
+        split: Vec<Arc<str>>,
+        is_selected: &'a mut bool,
+        bounds: Bounds,
+        text_height: i32,
+        style: Style,
+    },
 }
 impl<'a> Widget<'a> {
     pub fn bounds(&self) -> Bounds {
@@ -769,6 +892,16 @@ impl<'a> Widget<'a> {
                 child: _,
                 bounds,
                 on_click: _,
+            } => *bounds,
+            Widget::Canvas { bounds, to_run: _ } => *bounds,
+            Widget::TextInput {
+                text: _,
+                is_selected: _,
+                split: _,
+                bounds,
+                text_height: _,
+                style: _,
+                output: _,
             } => *bounds,
         }
     }
@@ -831,6 +964,22 @@ impl<'a> Widget<'a> {
                 bounds.x += dx;
                 bounds.y += dy;
                 child.shift(old_pos, new_pos);
+            }
+            Widget::Canvas { bounds, to_run: _ } => {
+                bounds.x += dx;
+                bounds.y += dy;
+            }
+            Widget::TextInput {
+                text: _,
+                split: _,
+                is_selected: _,
+                bounds,
+                text_height: _,
+                style: _,
+                output: _,
+            } => {
+                bounds.x += dx;
+                bounds.y += dy;
             }
         }
     }
@@ -917,12 +1066,33 @@ impl<'a> Widget<'a> {
                 bounds.width = (bounds.width as f32 * rx) as i32;
                 child.rescale(new_width, new_height);
             }
+            Widget::Canvas { bounds, to_run: _ } => {
+                bounds.x = (bounds.x as f32 * rx) as i32;
+                bounds.y = (bounds.y as f32 * ry) as i32;
+                bounds.height = (bounds.height as f32 * ry) as i32;
+                bounds.width = (bounds.width as f32 * rx) as i32;
+            }
+            Widget::TextInput {
+                text: _,
+                split: _,
+                is_selected: _,
+                bounds,
+                text_height,
+                style: _,
+                output: _,
+            } => {
+                bounds.x = (bounds.x as f32 * rx) as i32;
+                bounds.y = (bounds.y as f32 * ry) as i32;
+                bounds.height = (bounds.height as f32 * ry) as i32;
+                bounds.width = (bounds.width as f32 * rx) as i32;
+                *text_height = (*text_height as f32 * ry) as i32;
+            }
         }
     }
 
     pub fn render(
         &mut self,
-        handle: &RaylibHandle,
+        handle: &mut RaylibHandle,
         thread: &RaylibThread,
         cmd: &mut CommandBufferBuilder,
     ) {
@@ -1081,6 +1251,84 @@ impl<'a> Widget<'a> {
                     on_click();
                 }
             }
+            Widget::Canvas { bounds, to_run } => {
+                let mut func = to_run.lock().unwrap();
+                func(*bounds, cmd, handle, thread);
+            }
+            Widget::TextInput {
+                text,
+                split,
+                is_selected,
+                bounds,
+                text_height,
+                style,
+                output,
+            } => {
+                let base_x = bounds.x + style.padding;
+                let mut base_y = bounds.y + style.padding;
+                let extra = (split.len() as i32 * *text_height - bounds.height)
+                    .clamp(0, (split.len() as i32 * *text_height - bounds.height).abs());
+                base_y -= extra;
+                cmd.draw_rectangle(
+                    bounds.x,
+                    bounds.y,
+                    bounds.width,
+                    bounds.height,
+                    style.outline_color,
+                );
+                cmd.draw_rectangle(
+                    bounds.x + 2,
+                    bounds.y + 2,
+                    bounds.width - 2,
+                    bounds.height - 2,
+                    style.container_color,
+                );
+                let mut last_line = bounds.y + style.padding;
+                let mut last_offset = style.padding;
+                for i in split {
+                    last_offset = handle.measure_text(&*i, *text_height);
+                    last_line = base_y;
+                    cmd.draw_text(i.clone(), base_x, base_y, *text_height, style.text_color);
+                    base_y += *text_height;
+                }
+                cmd.draw_rectangle(
+                    last_offset + bounds.x + style.padding,
+                    last_line,
+                    *text_height / 10,
+                    *text_height,
+                    style.outline_color,
+                );
+                let pos = handle.get_mouse_position();
+                let contains = bounds.contains_point(Point {
+                    x: pos.x as i32,
+                    y: pos.y as i32,
+                });
+                if contains
+                    && handle.is_mouse_button_released(raylib::ffi::MouseButton::MOUSE_BUTTON_LEFT)
+                {
+                    **is_selected = true;
+                }
+                if (!contains
+                    && handle.is_mouse_button_released(raylib::ffi::MouseButton::MOUSE_BUTTON_LEFT))
+                    || handle.is_key_pressed(raylib::ffi::KeyboardKey::KEY_ESCAPE)
+                {
+                    **is_selected = false;
+                }
+                if **is_selected {
+                    if handle.is_key_pressed(raylib::ffi::KeyboardKey::KEY_ENTER) {
+                        **output = Some(text.clone());
+                        text.clear();
+                    }
+                    if handle.is_key_pressed(raylib::ffi::KeyboardKey::KEY_DELETE)
+                        || handle.is_key_pressed(raylib::ffi::KeyboardKey::KEY_BACKSPACE)
+                    {
+                        text.pop();
+                    }
+                    if let Some(c) = handle.get_char_pressed() {
+                        text.push(c);
+                    }
+                }
+            }
         }
     }
 }
@@ -1144,6 +1392,30 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
             children: Vec::new(),
             padding,
         }
+    }
+
+    pub fn canvas(
+        &mut self,
+        width: i32,
+        height: i32,
+        to_render: impl FnMut(Bounds, &mut CommandBufferBuilder, &mut RaylibHandle, &RaylibThread)
+        + 'static,
+    ) {
+        let w = Widget::Canvas {
+            bounds: Bounds {
+                x: self.bounds.width + self.bounds.x + self.padding,
+                y: self.bounds.y + self.padding,
+                width,
+                height,
+            },
+            to_run: Arc::new(Mutex::new(Box::new(to_render))),
+        };
+        self.children.push(w);
+        let tmp = self.padding * 2 + height;
+        if tmp > self.bounds.height {
+            self.bounds.height = tmp;
+        };
+        self.bounds.width += width + self.padding * 2;
     }
 
     pub fn text(&mut self, text: &str, text_height: i32, width: i32) {
@@ -1475,6 +1747,40 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
             on_click,
         );
     }
+
+    pub fn text_input(
+        &mut self,
+        text: &'a mut String,
+        text_height: i32,
+        width: i32,
+        height: i32,
+        selected: &'a mut bool,
+        output: &'a mut Option<String>,
+    ) {
+        let w = width;
+        let x0 = self.bounds.x + self.bounds.width + self.padding;
+        let y0 = self.bounds.y + self.padding;
+        let split = split_text(text, self.handle, w, text_height);
+        let tmp = height + self.padding * 2;
+        if tmp > self.bounds.height {
+            self.bounds.height = tmp;
+        }
+        self.bounds.width += width + self.padding * 2;
+        self.children.push(Widget::TextInput {
+            style: self.style,
+            text_height,
+            bounds: Bounds {
+                x: x0,
+                y: y0,
+                width: w,
+                height,
+            },
+            split,
+            text,
+            output,
+            is_selected: selected,
+        });
+    }
 }
 
 impl<'a, 'b> ContainerBuilder<'a, 'b> {
@@ -1522,6 +1828,35 @@ impl<'a, 'b> ContainerBuilder<'a, 'b> {
                 height,
             },
             contents: split,
+        });
+    }
+
+    pub fn text_input(
+        &mut self,
+        text: &'a mut String,
+        text_height: i32,
+        height: i32,
+        selected: &'a mut bool,
+        output: &'a mut Option<String>,
+    ) {
+        let w = self.bounds.width - self.padding * 2;
+        let x0 = self.bounds.x + self.padding;
+        let y0 = self.bounds.y + self.bounds.height + self.padding;
+        let split = split_text(text, self.handle, w, text_height);
+        self.bounds.height += height + self.padding;
+        self.children.push(Widget::TextInput {
+            style: self.style,
+            text_height,
+            bounds: Bounds {
+                x: x0,
+                y: y0,
+                width: w,
+                height,
+            },
+            split,
+            text,
+            output,
+            is_selected: selected,
         });
     }
 
@@ -1777,6 +2112,25 @@ impl<'a, 'b> ContainerBuilder<'a, 'b> {
         to_run(self);
         self.style = old_style;
     }
+
+    pub fn canvas(
+        &mut self,
+        height: i32,
+        to_render: impl FnMut(Bounds, &mut CommandBufferBuilder, &mut RaylibHandle, &RaylibThread)
+        + 'static,
+    ) {
+        let w = Widget::Canvas {
+            bounds: Bounds {
+                x: self.bounds.width + self.bounds.x + self.padding,
+                y: self.bounds.y + self.padding,
+                width: self.bounds.width - self.padding * 2,
+                height,
+            },
+            to_run: Arc::new(Mutex::new(Box::new(to_render))),
+        };
+        self.children.push(w);
+        self.bounds.height += height + self.padding * 2;
+    }
 }
 
 impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
@@ -1825,6 +2179,35 @@ impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
                 height,
             },
             contents: split,
+        });
+    }
+
+    pub fn text_input(
+        &mut self,
+        text: &'a mut String,
+        text_height: i32,
+        height: i32,
+        selected: &'a mut bool,
+        output: &'a mut Option<String>,
+    ) {
+        let w = self.bounds.width - self.padding * 2;
+        let x0 = self.bounds.x + self.padding;
+        let y0 = self.displacement + self.padding;
+        let split = split_text(text, self.handle, w, text_height);
+        self.displacement += height + self.padding;
+        self.children.push(Widget::TextInput {
+            style: self.style,
+            text_height,
+            text,
+            bounds: Bounds {
+                x: x0,
+                y: y0,
+                width: w,
+                height,
+            },
+            split,
+            is_selected: selected,
+            output,
         });
     }
 
@@ -2091,6 +2474,24 @@ impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
     pub fn button_4(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
         self.button(text.as_ref(), self.style.paragraph_height - 12, on_click);
     }
+    pub fn canvas(
+        &mut self,
+        height: i32,
+        to_render: impl FnMut(Bounds, &mut CommandBufferBuilder, &mut RaylibHandle, &RaylibThread)
+        + 'static,
+    ) {
+        let w = Widget::Canvas {
+            bounds: Bounds {
+                x: self.bounds.width + self.bounds.x + self.padding,
+                y: self.displacement + self.padding,
+                width: self.bounds.width - self.padding * 2,
+                height,
+            },
+            to_run: Arc::new(Mutex::new(Box::new(to_render))),
+        };
+        self.children.push(w);
+        self.displacement += height + self.padding * 2;
+    }
 }
 
 impl<'a, 'b> ReversedScrollBoxContainerBuilder<'a, 'b> {
@@ -2139,6 +2540,35 @@ impl<'a, 'b> ReversedScrollBoxContainerBuilder<'a, 'b> {
                 height,
             },
             contents: split,
+        });
+    }
+
+    pub fn text_input(
+        &mut self,
+        text: &'a mut String,
+        text_height: i32,
+        height: i32,
+        selected: &'a mut bool,
+        output: &'a mut Option<String>,
+    ) {
+        let w = self.bounds.width - self.padding * 2;
+        let x0 = self.bounds.x + self.padding;
+        let y0 = self.displacement + self.padding;
+        let split = split_text(text, self.handle, w, text_height);
+        self.displacement += height + self.padding;
+        self.children.push(Widget::TextInput {
+            style: self.style,
+            text_height,
+            bounds: Bounds {
+                x: x0,
+                y: y0,
+                width: w,
+                height,
+            },
+            text,
+            split,
+            is_selected: selected,
+            output,
         });
     }
 
@@ -2407,6 +2837,25 @@ impl<'a, 'b> ReversedScrollBoxContainerBuilder<'a, 'b> {
     pub fn button_4(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
         self.button(text.as_ref(), self.style.paragraph_height - 12, on_click);
     }
+
+    pub fn canvas(
+        &mut self,
+        height: i32,
+        to_render: impl FnMut(Bounds, &mut CommandBufferBuilder, &mut RaylibHandle, &RaylibThread)
+        + 'static,
+    ) {
+        let w = Widget::Canvas {
+            bounds: Bounds {
+                x: self.bounds.width + self.bounds.x + self.padding,
+                y: self.displacement + self.padding,
+                width: self.bounds.width - self.padding * 2,
+                height,
+            },
+            to_run: Arc::new(Mutex::new(Box::new(to_render))),
+        };
+        self.children.push(w);
+        self.displacement += height + self.padding * 2;
+    }
 }
 pub fn split_text(
     text: &str,
@@ -2416,6 +2865,7 @@ pub fn split_text(
 ) -> Vec<Arc<str>> {
     let mut out = Vec::new();
     let mut current = String::new();
+    let mut tmp = String::new();
     let mut dw = 0;
     for i in text.chars() {
         if i == '\n' {
@@ -2424,16 +2874,21 @@ pub fn split_text(
             current.clear();
         } else {
             current.push(i);
-            let glyph = i;
-            let mut s = [0u8; 8];
-            let st = glyph.encode_utf8(&mut s);
-            let nw = handle.measure_text(st, text_height) + dw;
+            tmp.push(i);
+            tmp.push(' ');
+            let nw = handle.measure_text(&tmp, text_height) + dw;
+            tmp.clear();
             if nw >= width {
-                dw = 0;
-                current.pop();
-                out.push(current.clone().into());
-                current.clear();
-                current.push(i)
+                let tmp2 = handle.measure_text(&current, text_height) + (text_height * 18) / 10;
+                if tmp2 >= width {
+                    dw = 0;
+                    current.pop();
+                    out.push(current.clone().into());
+                    current.clear();
+                    current.push(i)
+                } else {
+                    dw = tmp2;
+                }
             } else {
                 dw = nw;
             }
@@ -2560,12 +3015,12 @@ impl<'a> GUI<'a> {
     }
 
     pub fn render(&mut self) {
-        let cmds = self.render_commands();
+        let mut cmds = self.render_commands();
         cmds.run(self.handle, self.thread);
     }
 
     pub fn render_fps(&mut self) {
-        let cmds = self.render_commands();
+        let mut cmds = self.render_commands();
         cmds.run_fps(self.handle, self.thread);
     }
 
