@@ -20,9 +20,9 @@ async fn main() {
         let mut gui = GUI::new(&mut handle, &thread);
         gui.centered_horizontal(|cmds| {
             cmds.container(600, |cmds| {
-                cmds.text("hi papa i love you", 42);
-                cmds.text("hello world", 16);
-                cmds.text(&format!("counter:{}", counter.borrow()), 16);
+                cmds.h1("hello sailor!");
+                cmds.p1("hello world");
+                cmds.p1(&format!("counter:{}", counter.borrow()));
                 cmds.button("increment", 16, || {
                     let mut tmp = counter.borrow_mut();
                     *tmp += 1;
@@ -33,11 +33,11 @@ async fn main() {
                 });
             });
             cmds.container(600, |cmds| {
-                cmds.text("list", 16);
-                cmds.scroll_box(900, &mut scroll_amnt, |cmds| {
+                cmds.h1("list");
+                cmds.scroll_box_rev(600, &mut scroll_amnt, |cmds| {
                     let count = *counter.borrow();
                     for i in 0..count {
-                        cmds.text(&format!("{}", i), 16);
+                        cmds.p3(&format!("{}:Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.", i));
                     }
                 });
             });

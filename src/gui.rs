@@ -36,6 +36,8 @@ impl Bounds {
         v.check_collision_point_rec(v2)
     }
 }
+
+#[derive(Clone)]
 pub enum DrawCommand {
     Shader {
         shader: Arc<Mutex<Shader>>,
@@ -43,7 +45,7 @@ pub enum DrawCommand {
     },
     MutateShader {
         shader: Arc<Mutex<Shader>>,
-        function: Box<dyn FnOnce(&mut Shader)>,
+        function: Arc<Mutex<Box<dyn FnMut(&mut Shader)>>>,
     },
     Scissor {
         children: Vec<DrawCommand>,
@@ -101,11 +103,13 @@ pub enum DrawCommand {
     },
 }
 
+#[derive(Clone)]
 pub struct CommandBuffer {
     render_texture_calls: Vec<RenderTextureCmdBuffer>,
     calls: Vec<DrawCommand>,
 }
 
+#[derive(Clone)]
 pub struct RenderTextureCmdBuffer {
     texture: Arc<Mutex<RenderTexture2D>>,
     commands: Vec<DrawCommand>,
@@ -342,11 +346,11 @@ impl CommandBufferBuilder {
     pub fn update_shader(
         &mut self,
         shader: &Arc<Mutex<Shader>>,
-        to_run: impl FnOnce(&mut Shader) + 'static,
+        to_run: impl FnMut(&mut Shader) + 'static,
     ) {
         self.values.push(DrawCommand::MutateShader {
             shader: shader.clone(),
-            function: Box::new(to_run),
+            function: Arc::new(Mutex::new(Box::new(to_run))),
         });
     }
 }
@@ -365,7 +369,6 @@ impl CommandBuffer {
         match cmd {
             DrawCommand::Shader { shader, commands } => {
                 let mut guard = shader.lock().unwrap();
-
                 let mut mode = handle.begin_shader_mode(&mut guard);
                 for i in commands {
                     Self::run_command(i, &mut mode, thread);
@@ -373,7 +376,8 @@ impl CommandBuffer {
             }
             DrawCommand::MutateShader { shader, function } => {
                 let mut guard = shader.lock().unwrap();
-                function(&mut guard);
+                let mut func = function.lock().unwrap();
+                func(&mut guard);
             }
             DrawCommand::Scissor { children, bounds } => {
                 let mut mode =
@@ -522,7 +526,8 @@ impl CommandBuffer {
             }
             DrawCommand::MutateShader { shader, function } => {
                 let mut guard = shader.lock().unwrap();
-                function(&mut guard);
+                let mut func = function.lock().unwrap();
+                func(&mut guard);
             }
             DrawCommand::Scissor { children, bounds } => {
                 let mut mode =
@@ -653,6 +658,8 @@ pub struct Style {
     pub background_color: Color,
     pub outline_color: Color,
     pub padding: i32,
+    pub header_height: i32,
+    pub paragraph_height: i32,
 }
 pub enum Widget<'a> {
     Container {
@@ -662,9 +669,11 @@ pub enum Widget<'a> {
     },
     ScrollBox {
         style: Style,
+        reversed: bool,
         bounds: Bounds,
         children: Vec<Widget<'a>>,
         scroll_amount: &'a mut f32,
+        displacement: i32,
     },
     Text {
         style: Style,
@@ -704,10 +713,12 @@ impl<'a> Widget<'a> {
                 children.iter_mut().for_each(|i| i.shift(old_pos, new_pos));
             }
             Widget::ScrollBox {
+                reversed: _,
                 bounds,
                 children,
                 scroll_amount: _,
                 style: _,
+                displacement: _,
             } => {
                 bounds.x += dx;
                 bounds.y += dy;
@@ -770,10 +781,12 @@ impl<'a> Widget<'a> {
             }
 
             Widget::ScrollBox {
+                reversed: _,
                 bounds,
                 children,
                 scroll_amount: _,
                 style: _,
+                displacement: _,
             } => {
                 bounds.x = (bounds.x as f32 * rx) as i32;
                 bounds.y = (bounds.y as f32 * ry) as i32;
@@ -833,6 +846,7 @@ impl<'a> Widget<'a> {
             }
         }
     }
+
     pub fn render(
         &mut self,
         handle: &RaylibHandle,
@@ -864,6 +878,8 @@ impl<'a> Widget<'a> {
                 }
             }
             Widget::ScrollBox {
+                reversed,
+                displacement,
                 bounds,
                 children,
                 scroll_amount,
@@ -889,11 +905,12 @@ impl<'a> Widget<'a> {
                         x: pos.x as i32,
                         y: pos.y as i32,
                     });
+                    let sign = if *reversed { -1. } else { 1.0 };
                     if contains {
-                        **scroll_amount += -handle.get_mouse_wheel_move()
-                            * handle.get_frame_time()
-                            * children.len() as f32
-                            * 10.;
+                        **scroll_amount +=
+                            -handle.get_mouse_wheel_move() * handle.get_frame_time() * 420.
+                                / (displacement.abs() as f32 + 1.0)
+                                * sign;
                         if **scroll_amount < 0.0 {
                             **scroll_amount = 0.0;
                         } else if **scroll_amount > 1.0 {
@@ -967,6 +984,18 @@ impl<'a> Widget<'a> {
                     bounds.height - 4,
                     if mouse_down && contains {
                         style.button_down_color
+                    } else if contains {
+                        let mut col = style.button_color;
+                        if col.r >= 5 {
+                            col.r -= 5;
+                        }
+                        if col.g >= 5 {
+                            col.g -= 5;
+                        }
+                        if col.b >= 5 {
+                            col.b -= 5;
+                        }
+                        col
                     } else {
                         style.button_color
                     },
@@ -1005,7 +1034,19 @@ pub struct ScrollBoxContainerBuilder<'a, 'b> {
     children: Vec<Widget<'a>>,
 }
 
+pub struct ReversedScrollBoxContainerBuilder<'a, 'b> {
+    style: Style,
+    handle: &'b RaylibHandle,
+    bounds: Bounds,
+    padding: i32,
+    displacement: i32,
+    children: Vec<Widget<'a>>,
+}
 impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
+    pub fn get_style(&self) -> Style {
+        self.style
+    }
+
     pub fn new(
         handle: &'b RaylibHandle,
         x: i32,
@@ -1051,6 +1092,36 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
             },
             contents: split,
         });
+    }
+
+    pub fn h1(&mut self, text: impl AsRef<str>, width: i32) {
+        self.text(text.as_ref(), self.style.header_height, width);
+    }
+
+    pub fn h2(&mut self, text: impl AsRef<str>, width: i32) {
+        self.text(text.as_ref(), self.style.header_height - 4, width);
+    }
+
+    pub fn h3(&mut self, text: impl AsRef<str>, width: i32) {
+        self.text(text.as_ref(), self.style.header_height - 8, width);
+    }
+    pub fn h4(&mut self, text: impl AsRef<str>, width: i32) {
+        self.text(text.as_ref(), self.style.header_height - 12, width);
+    }
+
+    pub fn p1(&mut self, text: impl AsRef<str>, width: i32) {
+        self.text(text.as_ref(), self.style.paragraph_height, width);
+    }
+
+    pub fn p2(&mut self, text: impl AsRef<str>, width: i32) {
+        self.text(text.as_ref(), self.style.paragraph_height - 4, width);
+    }
+
+    pub fn p3(&mut self, text: impl AsRef<str>, width: i32) {
+        self.text(text.as_ref(), self.style.paragraph_height - 8, width);
+    }
+    pub fn p4(&mut self, text: impl AsRef<str>, width: i32) {
+        self.text(text.as_ref(), self.style.paragraph_height - 12, width);
     }
 
     pub fn button(
@@ -1201,6 +1272,35 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
         self.children.push(cloned.build(scroll_amount));
     }
 
+    pub fn scroll_box_rev(
+        &mut self,
+        width: i32,
+        height: i32,
+        scroll_amount: &'a mut f32,
+        child: impl FnOnce(&mut ReversedScrollBoxContainerBuilder<'a, 'b>),
+    ) {
+        let mut cloned = ReversedScrollBoxContainerBuilder {
+            handle: self.handle,
+            style: self.style,
+            bounds: Bounds {
+                x: self.bounds.x + self.bounds.width + self.padding,
+                y: self.bounds.y + self.padding,
+                width: width,
+                height: height,
+            },
+            padding: self.padding,
+            displacement: 0,
+            children: Vec::new(),
+        };
+        child(&mut cloned);
+        self.bounds.width += self.padding * 2 + width;
+        if height + self.padding * 2 > self.bounds.height {
+            self.bounds.height = self.padding * 2 + height;
+        }
+        self.bounds.width += width + self.padding * 2;
+        self.children.push(cloned.build(scroll_amount));
+    }
+
     pub fn image(&mut self, width: i32, image: Arc<Texture2D>) {
         let w = width;
         let x0 = self.bounds.x + self.bounds.width + self.padding;
@@ -1258,6 +1358,47 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
             children: self.children,
         }
     }
+    pub fn with_style(
+        &mut self,
+        style: Style,
+        to_run: impl FnOnce(&mut HorizontalContainerBuilder<'a, 'b>),
+    ) {
+        let old_style = self.style;
+        self.style = style;
+        to_run(self);
+        self.style = old_style;
+    }
+
+    pub fn button_1(&mut self, text: impl AsRef<str>, width: i32, on_click: impl FnMut() + 'a) {
+        self.button(text.as_ref(), self.style.paragraph_height, width, on_click);
+    }
+
+    pub fn button_2(&mut self, text: impl AsRef<str>, width: i32, on_click: impl FnMut() + 'a) {
+        self.button(
+            text.as_ref(),
+            self.style.paragraph_height - 4,
+            width,
+            on_click,
+        );
+    }
+
+    pub fn button_3(&mut self, text: impl AsRef<str>, width: i32, on_click: impl FnMut() + 'a) {
+        self.button(
+            text.as_ref(),
+            self.style.paragraph_height - 8,
+            width,
+            on_click,
+        );
+    }
+
+    pub fn button_4(&mut self, text: impl AsRef<str>, width: i32, on_click: impl FnMut() + 'a) {
+        self.button(
+            text.as_ref(),
+            self.style.paragraph_height - 12,
+            width,
+            on_click,
+        );
+    }
 }
 
 impl<'a, 'b> ContainerBuilder<'a, 'b> {
@@ -1282,6 +1423,10 @@ impl<'a, 'b> ContainerBuilder<'a, 'b> {
             children: Vec::new(),
             padding,
         }
+    }
+
+    pub fn get_style(&self) -> Style {
+        self.style
     }
 
     pub fn text(&mut self, text: &str, text_height: i32) {
@@ -1333,6 +1478,22 @@ impl<'a, 'b> ContainerBuilder<'a, 'b> {
             on_click: Box::new(on_click),
         };
         self.children.push(b);
+    }
+
+    pub fn button_1(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+        self.button(text.as_ref(), self.style.paragraph_height, on_click);
+    }
+
+    pub fn button_2(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+        self.button(text.as_ref(), self.style.paragraph_height - 4, on_click);
+    }
+
+    pub fn button_3(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+        self.button(text.as_ref(), self.style.paragraph_height - 8, on_click);
+    }
+
+    pub fn button_4(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+        self.button(text.as_ref(), self.style.paragraph_height - 12, on_click);
     }
 
     pub fn button_image(&mut self, image: Arc<Texture2D>, on_click: impl FnMut() + 'a) {
@@ -1428,6 +1589,30 @@ impl<'a, 'b> ContainerBuilder<'a, 'b> {
         self.children.push(cloned.build(scroll_amount));
     }
 
+    pub fn scroll_box_rev(
+        &mut self,
+        height: i32,
+        scroll_amount: &'a mut f32,
+        child: impl FnOnce(&mut ReversedScrollBoxContainerBuilder<'a, 'b>),
+    ) {
+        let mut cloned = ReversedScrollBoxContainerBuilder {
+            style: self.style,
+            handle: self.handle,
+            bounds: Bounds {
+                x: self.bounds.x + self.padding,
+                y: self.bounds.y + self.bounds.height + self.padding,
+                width: self.bounds.width - self.padding * 2,
+                height: height,
+            },
+            padding: self.padding,
+            displacement: 0,
+            children: Vec::new(),
+        };
+        child(&mut cloned);
+        self.bounds.height += height + self.padding * 2;
+        self.children.push(cloned.build(scroll_amount));
+    }
+
     pub fn image(&mut self, image: Arc<Texture2D>) {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
@@ -1478,6 +1663,44 @@ impl<'a, 'b> ContainerBuilder<'a, 'b> {
             children: self.children,
         }
     }
+
+    pub fn h1(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.header_height);
+    }
+
+    pub fn h2(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.header_height - 4);
+    }
+
+    pub fn h3(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.header_height - 8);
+    }
+    pub fn h4(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.header_height - 12);
+    }
+
+    pub fn p1(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.paragraph_height);
+    }
+
+    pub fn p2(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.paragraph_height - 4);
+    }
+
+    pub fn p3(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.paragraph_height - 8);
+    }
+
+    pub fn p4(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.paragraph_height - 12);
+    }
+
+    pub fn with_style(&mut self, style: Style, to_run: impl FnOnce(&mut ContainerBuilder<'a, 'b>)) {
+        let old_style = self.style;
+        self.style = style;
+        to_run(self);
+        self.style = old_style;
+    }
 }
 
 impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
@@ -1503,6 +1726,324 @@ impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
             padding,
             displacement: y,
         }
+    }
+
+    pub fn get_style(&self) -> Style {
+        self.style
+    }
+
+    pub fn text(&mut self, text: &str, text_height: i32) {
+        let w = self.bounds.width - self.padding * 2;
+        let x0 = self.bounds.x + self.padding;
+        let y0 = self.displacement + self.padding;
+        let split = split_text(text, self.handle, w, text_height);
+        let height = split.len() as i32 * text_height;
+        self.displacement += height + self.padding;
+        self.children.push(Widget::Text {
+            style: self.style,
+            text_height,
+            bounds: Bounds {
+                x: x0,
+                y: y0,
+                width: w,
+                height,
+            },
+            contents: split,
+        });
+    }
+
+    pub fn button(&mut self, text: &str, text_height: i32, on_click: impl FnMut() + 'a) {
+        let w = self.bounds.width - self.padding * 2;
+        let x0 = self.bounds.x + self.padding;
+        let y0 = self.displacement + self.padding;
+        let split = split_text(text, self.handle, w - self.padding * 2, text_height);
+        let height = split.len() as i32 * text_height + self.padding * 2;
+        self.displacement += height;
+        let b = Widget::Button {
+            style: self.style,
+            child: Box::new(Widget::Text {
+                style: self.style,
+                text_height,
+                bounds: Bounds {
+                    x: x0 + self.padding,
+                    y: y0 + self.padding,
+                    width: w - self.padding * 2,
+                    height: height + self.padding * 2,
+                },
+                contents: split,
+            }),
+            bounds: Bounds {
+                x: x0,
+                y: y0,
+                width: w,
+                height,
+            },
+            on_click: Box::new(on_click),
+        };
+        self.children.push(b);
+    }
+
+    pub fn button_image(&mut self, image: Arc<Texture2D>, on_click: impl FnMut() + 'a) {
+        let w = self.bounds.width - self.padding * 2;
+        let x0 = self.bounds.x + self.padding;
+        let y0 = self.displacement + self.padding;
+        let ratio = image.width() as f32 / image.height() as f32;
+        let height = ((w - self.padding * 2) as f32 * ratio) as i32;
+        self.displacement += height + self.padding * 2;
+        let b = Widget::Button {
+            style: self.style,
+            child: Box::new(Widget::Image {
+                style: self.style,
+                bounds: Bounds {
+                    x: x0 + self.padding,
+                    y: y0 + self.padding,
+                    width: w - self.padding * 2,
+                    height: height + self.padding * 2,
+                },
+                to_draw: image,
+            }),
+            bounds: Bounds {
+                x: x0,
+                y: y0,
+                width: w,
+                height,
+            },
+            on_click: Box::new(on_click),
+        };
+        self.children.push(b);
+    }
+
+    pub fn container(&mut self, child: impl FnOnce(&mut ContainerBuilder<'a, 'b>)) {
+        let mut cloned = ContainerBuilder {
+            style: self.style,
+            handle: self.handle,
+            bounds: Bounds {
+                x: self.bounds.x + self.padding,
+                y: self.displacement + self.padding,
+                width: self.bounds.width - self.padding * 2,
+                height: 0,
+            },
+            padding: self.padding,
+            children: Vec::new(),
+        };
+        child(&mut cloned);
+        self.displacement += self.padding * 2 + cloned.bounds.height;
+        self.children.push(cloned.build());
+    }
+
+    pub fn scroll_box(
+        &mut self,
+        scroll_amount: &'a mut f32,
+        height: i32,
+        child: impl FnOnce(&mut ScrollBoxContainerBuilder<'a, 'b>),
+    ) {
+        let mut cloned = ScrollBoxContainerBuilder {
+            style: self.style,
+            handle: self.handle,
+            bounds: Bounds {
+                x: self.bounds.x + self.padding,
+                y: self.displacement + self.padding,
+                width: self.bounds.width - self.padding * 2,
+                height: height,
+            },
+            padding: self.padding,
+            displacement: 0,
+            children: Vec::new(),
+        };
+        child(&mut cloned);
+        self.displacement += self.padding * 2 + cloned.bounds.height;
+        self.children.push(cloned.build(scroll_amount));
+    }
+    pub fn scroll_box_rev(
+        &mut self,
+        scroll_amount: &'a mut f32,
+        height: i32,
+        child: impl FnOnce(&mut ReversedScrollBoxContainerBuilder<'a, 'b>),
+    ) {
+        let mut cloned = ReversedScrollBoxContainerBuilder {
+            style: self.style,
+            handle: self.handle,
+            bounds: Bounds {
+                x: self.bounds.x + self.padding,
+                y: self.displacement + self.padding,
+                width: self.bounds.width - self.padding * 2,
+                height: height,
+            },
+            padding: self.padding,
+            displacement: 0,
+            children: Vec::new(),
+        };
+        child(&mut cloned);
+        self.displacement += self.padding * 2 + cloned.bounds.height;
+        self.children.push(cloned.build(scroll_amount));
+    }
+
+    pub fn horizontal_container(
+        &mut self,
+        child: impl FnOnce(&mut HorizontalContainerBuilder<'a, 'b>),
+    ) {
+        let mut cloned = HorizontalContainerBuilder {
+            style: self.style,
+            handle: self.handle,
+            bounds: Bounds {
+                x: self.bounds.x + self.padding,
+                y: self.displacement + self.padding,
+                width: self.bounds.width - self.padding * 2,
+                height: 0,
+            },
+            padding: self.padding,
+            children: Vec::new(),
+        };
+        child(&mut cloned);
+        self.displacement += self.padding * 2 + cloned.bounds.height;
+        self.children.push(cloned.build());
+    }
+
+    pub fn image(&mut self, image: Arc<Texture2D>) {
+        let w = self.bounds.width - self.padding * 2;
+        let x0 = self.bounds.x + self.padding;
+        let y0 = self.displacement + self.padding;
+        let ratio = image.width() as f32 / image.height() as f32;
+        let height = ((w) as f32 * ratio) as i32;
+        self.displacement += height + self.padding;
+        let b = Widget::Image {
+            style: self.style,
+            bounds: Bounds {
+                x: x0 + self.padding,
+                y: y0 + self.padding,
+                width: w - self.padding * 2,
+                height: height + self.padding * 2,
+            },
+            to_draw: image,
+        };
+        self.children.push(b);
+    }
+
+    pub fn image_mut(&mut self, image: Arc<Mutex<RenderTexture2D>>) {
+        let w = self.bounds.width - self.padding * 2;
+        let x0 = self.bounds.x + self.padding;
+        let y0 = self.displacement + self.padding;
+        let guard = image.lock().unwrap();
+        let ratio = guard.width() as f32 / guard.height() as f32;
+        drop(guard);
+        let height = ((w) as f32 * ratio) as i32;
+        self.displacement += height + self.padding;
+        let b = Widget::ImageMut {
+            style: self.style,
+            bounds: Bounds {
+                x: x0 + self.padding,
+                y: y0 + self.padding,
+                width: w - self.padding * 2,
+                height: height + self.padding * 2,
+            },
+            to_draw: image,
+        };
+        self.children.push(b);
+    }
+
+    pub fn build(mut self, scroll_amount: &'a mut f32) -> Widget<'a> {
+        let offset = ((self.displacement - self.bounds.height - self.padding * 2) as f32
+            * -*scroll_amount) as i32
+            + self.style.paragraph_height * 3;
+        let base = Point { x: 0, y: 0 };
+        let offset = Point { x: 0, y: offset };
+        self.children.iter_mut().for_each(|i| i.shift(base, offset));
+        Widget::ScrollBox {
+            reversed: false,
+            displacement: self.displacement,
+            bounds: self.bounds,
+            style: self.style,
+            children: self.children,
+            scroll_amount,
+        }
+    }
+
+    pub fn h1(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.header_height);
+    }
+
+    pub fn h2(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.header_height - 4);
+    }
+
+    pub fn h3(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.header_height - 8);
+    }
+    pub fn h4(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.header_height - 12);
+    }
+
+    pub fn p1(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.paragraph_height);
+    }
+
+    pub fn p2(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.paragraph_height - 4);
+    }
+
+    pub fn p3(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.paragraph_height - 8);
+    }
+
+    pub fn p4(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.paragraph_height - 12);
+    }
+
+    pub fn with_style(
+        &mut self,
+        style: Style,
+        to_run: impl FnOnce(&mut ScrollBoxContainerBuilder<'a, 'b>),
+    ) {
+        let old_style = self.style;
+        self.style = style;
+        to_run(self);
+        self.style = old_style;
+    }
+
+    pub fn button_1(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+        self.button(text.as_ref(), self.style.paragraph_height, on_click);
+    }
+
+    pub fn button_2(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+        self.button(text.as_ref(), self.style.paragraph_height - 4, on_click);
+    }
+
+    pub fn button_3(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+        self.button(text.as_ref(), self.style.paragraph_height - 8, on_click);
+    }
+
+    pub fn button_4(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+        self.button(text.as_ref(), self.style.paragraph_height - 12, on_click);
+    }
+}
+
+impl<'a, 'b> ReversedScrollBoxContainerBuilder<'a, 'b> {
+    pub fn new(
+        handle: &'b RaylibHandle,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        padding: i32,
+        style: Style,
+    ) -> Self {
+        Self {
+            style,
+            handle,
+            bounds: Bounds {
+                x,
+                y,
+                width,
+                height,
+            },
+            children: Vec::new(),
+            padding,
+            displacement: y + height,
+        }
+    }
+
+    pub fn get_style(&self) -> Style {
+        self.style
     }
 
     pub fn text(&mut self, text: &str, text_height: i32) {
@@ -1628,6 +2169,29 @@ impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
         self.children.push(cloned.build(scroll_amount));
     }
 
+    pub fn scroll_box_rev(
+        &mut self,
+        scroll_amount: &'a mut f32,
+        height: i32,
+        child: impl FnOnce(&mut ReversedScrollBoxContainerBuilder<'a, 'b>),
+    ) {
+        let mut cloned = ReversedScrollBoxContainerBuilder {
+            style: self.style,
+            handle: self.handle,
+            bounds: Bounds {
+                x: self.bounds.x + self.padding,
+                y: self.displacement + self.padding,
+                width: self.bounds.width - self.padding * 2,
+                height: height,
+            },
+            padding: self.padding,
+            displacement: 0,
+            children: Vec::new(),
+        };
+        child(&mut cloned);
+        self.displacement += self.padding * 2 + cloned.bounds.height;
+        self.children.push(cloned.build(scroll_amount));
+    }
     pub fn horizontal_container(
         &mut self,
         child: impl FnOnce(&mut HorizontalContainerBuilder<'a, 'b>),
@@ -1690,21 +2254,84 @@ impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
         };
         self.children.push(b);
     }
+
     pub fn build(mut self, scroll_amount: &'a mut f32) -> Widget<'a> {
-        let offset =
-            ((self.displacement - self.bounds.height) as f32 * -*scroll_amount) as i32 + 32;
+        let offset = ((self.displacement - self.bounds.height) as f32 * (*scroll_amount)) as i32
+            + self.bounds.height
+            - self.displacement
+            + self.style.paragraph_height * 2
+            + self.padding * 2;
         let base = Point { x: 0, y: 0 };
         let offset = Point { x: 0, y: offset };
         self.children.iter_mut().for_each(|i| i.shift(base, offset));
         Widget::ScrollBox {
+            reversed: true,
+            displacement: self.displacement,
             bounds: self.bounds,
             style: self.style,
             children: self.children,
             scroll_amount,
         }
     }
-}
 
+    pub fn h1(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.header_height);
+    }
+
+    pub fn h2(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.header_height - 4);
+    }
+
+    pub fn h3(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.header_height - 8);
+    }
+    pub fn h4(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.header_height - 12);
+    }
+
+    pub fn p1(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.paragraph_height);
+    }
+
+    pub fn p2(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.paragraph_height - 4);
+    }
+
+    pub fn p3(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.paragraph_height - 8);
+    }
+
+    pub fn p4(&mut self, text: impl AsRef<str>) {
+        self.text(text.as_ref(), self.style.paragraph_height - 12);
+    }
+
+    pub fn with_style(
+        &mut self,
+        style: Style,
+        to_run: impl FnOnce(&mut ReversedScrollBoxContainerBuilder<'a, 'b>),
+    ) {
+        let old_style = self.style;
+        self.style = style;
+        to_run(self);
+        self.style = old_style;
+    }
+
+    pub fn button_1(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+        self.button(text.as_ref(), self.style.paragraph_height, on_click);
+    }
+
+    pub fn button_2(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+        self.button(text.as_ref(), self.style.paragraph_height - 4, on_click);
+    }
+
+    pub fn button_3(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+        self.button(text.as_ref(), self.style.paragraph_height - 8, on_click);
+    }
+
+    pub fn button_4(&mut self, text: impl AsRef<str>, on_click: impl FnMut() + 'a) {
+        self.button(text.as_ref(), self.style.paragraph_height - 12, on_click);
+    }
+}
 pub fn split_text(
     text: &str,
     handle: &RaylibHandle,
@@ -1753,6 +2380,8 @@ impl Style {
             background_color: Color::WHITE,
             outline_color: Color::BLACK,
             padding: 5,
+            header_height: 48,
+            paragraph_height: 24,
         }
     }
 }
