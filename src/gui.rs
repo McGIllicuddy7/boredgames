@@ -9,6 +9,7 @@ use raylib::{
         RaylibTextureModeExt,
     },
     shaders::Shader,
+    text::RaylibFont,
     texture::{RaylibTexture2D, RenderTexture2D, Texture2D},
 };
 
@@ -34,6 +35,22 @@ impl Bounds {
         );
         let v2 = Vector2::new(point.x as f32, point.y as f32);
         v.check_collision_point_rec(v2)
+    }
+
+    pub fn intersects(&self, other: &Self) -> bool {
+        let v = Rectangle::new(
+            self.x as f32,
+            self.y as f32,
+            self.width as f32,
+            self.height as f32,
+        );
+        let v2 = Rectangle::new(
+            other.x as f32,
+            other.y as f32,
+            other.width as f32,
+            other.height as f32,
+        );
+        v.check_collision_recs(&v2)
     }
 }
 
@@ -119,6 +136,12 @@ pub struct CommandBufferBuilder {
     values: Vec<DrawCommand>,
     render_texture_commands: Vec<RenderTextureCmdBuffer>,
 }
+impl Default for CommandBufferBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CommandBufferBuilder {
     pub fn new() -> Self {
         Self {
@@ -133,8 +156,8 @@ impl CommandBufferBuilder {
             bounds: Bounds {
                 x,
                 y,
-                width: width,
-                height: height,
+                width,
+                height,
             },
         });
     }
@@ -187,8 +210,8 @@ impl CommandBufferBuilder {
             bounds: Bounds {
                 x,
                 y,
-                width: width,
-                height: height,
+                width,
+                height,
             },
             rotation: 0.0,
             tint: Color::WHITE,
@@ -204,8 +227,8 @@ impl CommandBufferBuilder {
             bounds: Bounds {
                 x,
                 y,
-                width: width,
-                height: height,
+                width,
+                height,
             },
             rotation: 0.0,
             tint: Color::WHITE,
@@ -225,8 +248,8 @@ impl CommandBufferBuilder {
             bounds: Bounds {
                 x,
                 y,
-                width: width,
-                height: height,
+                width,
+                height,
             },
             rotation: 0.0,
             tint: Color::WHITE,
@@ -234,8 +257,7 @@ impl CommandBufferBuilder {
     }
 
     pub fn draw_circle(&mut self, x: i32, y: i32, r: f32, color: Color) {
-        self.values
-            .push(DrawCommand::DrawCircle { x, y, r: r, color });
+        self.values.push(DrawCommand::DrawCircle { x, y, r, color });
     }
 
     pub fn draw_line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, width: f32, color: Color) {
@@ -244,7 +266,7 @@ impl CommandBufferBuilder {
             y0,
             x1,
             y1,
-            width: width,
+            width,
             color,
         });
     }
@@ -365,6 +387,18 @@ impl CommandBuffer {
             Self::run_command(i, &mut draw, thread);
         }
     }
+
+    pub fn run_fps(self, handle: &mut RaylibHandle, thread: &RaylibThread) {
+        let w = handle.get_screen_width();
+        for i in self.render_texture_calls {
+            Self::run_render_cmd(i, handle, thread);
+        }
+        let mut draw = handle.begin_drawing(thread);
+        for i in self.calls {
+            Self::run_command(i, &mut draw, thread);
+        }
+        draw.draw_fps(w - 100, 100);
+    }
     pub fn run_command(cmd: DrawCommand, handle: &mut RaylibDrawHandle, thread: &RaylibThread) {
         match cmd {
             DrawCommand::Shader { shader, commands } => {
@@ -396,7 +430,7 @@ impl CommandBuffer {
                 color,
                 text,
             } => {
-                handle.draw_text(&*text, pos_x, pos_y, text_height, color);
+                handle.draw_text(&text, pos_x, pos_y, text_height, color);
             }
             DrawCommand::ClearBackground { color } => {
                 handle.clear_background(color);
@@ -504,7 +538,7 @@ impl CommandBuffer {
         thread: &RaylibThread,
     ) {
         let mut texture = cmd.texture.lock().unwrap();
-        let mut mode = handle.begin_texture_mode(&thread, &mut texture);
+        let mut mode = handle.begin_texture_mode(thread, &mut texture);
         for i in cmd.commands {
             Self::run_texture_draw_command(i, &mut mode, thread);
         }
@@ -546,7 +580,7 @@ impl CommandBuffer {
                 color,
                 text,
             } => {
-                handle.draw_text(&*text, pos_x, pos_y, text_height, color);
+                handle.draw_text(&text, pos_x, pos_y, text_height, color);
             }
             DrawCommand::ClearBackground { color } => {
                 handle.clear_background(color);
@@ -699,6 +733,45 @@ pub enum Widget<'a> {
     },
 }
 impl<'a> Widget<'a> {
+    pub fn bounds(&self) -> Bounds {
+        match self {
+            Widget::Container {
+                style: _,
+                bounds,
+                children: _,
+            } => *bounds,
+            Widget::ScrollBox {
+                style: _,
+                reversed: _,
+                bounds,
+                children: _,
+                scroll_amount: _,
+                displacement: _,
+            } => *bounds,
+            Widget::Text {
+                style: _,
+                bounds,
+                contents: _,
+                text_height: _,
+            } => *bounds,
+            Widget::Image {
+                style: _,
+                to_draw: _,
+                bounds,
+            } => *bounds,
+            Widget::ImageMut {
+                style: _,
+                to_draw: _,
+                bounds,
+            } => *bounds,
+            Widget::Button {
+                style: _,
+                child: _,
+                bounds,
+                on_click: _,
+            } => *bounds,
+        }
+    }
     pub fn shift(&mut self, old_pos: Point, new_pos: Point) {
         let dx = new_pos.x - old_pos.x;
         let dy = new_pos.y - old_pos.y;
@@ -918,7 +991,10 @@ impl<'a> Widget<'a> {
                         }
                     }
                     for i in children {
-                        i.render(handle, thread, cmd);
+                        let b = i.bounds();
+                        if b.intersects(bounds) {
+                            i.render(handle, thread, cmd);
+                        }
                     }
                 });
             }
@@ -931,7 +1007,7 @@ impl<'a> Widget<'a> {
                 let base_x = bounds.x;
                 let mut base_y = bounds.y;
                 for i in contents {
-                    cmd.draw_text(i.clone(), base_x, base_y, *text_height, *&style.text_color);
+                    cmd.draw_text(i.clone(), base_x, base_y, *text_height, style.text_color);
                     base_y += *text_height;
                 }
             }
@@ -1204,7 +1280,7 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
             bounds: Bounds {
                 x: self.bounds.x + self.bounds.width + self.padding,
                 y: self.bounds.y + self.padding,
-                width: width,
+                width,
                 height: 0,
             },
             padding: self.padding,
@@ -1256,8 +1332,8 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
             bounds: Bounds {
                 x: self.bounds.x + self.bounds.width + self.padding,
                 y: self.bounds.y + self.padding,
-                width: width,
-                height: height,
+                width,
+                height,
             },
             padding: self.padding,
             displacement: 0,
@@ -1285,8 +1361,8 @@ impl<'a, 'b> HorizontalContainerBuilder<'a, 'b> {
             bounds: Bounds {
                 x: self.bounds.x + self.bounds.width + self.padding,
                 y: self.bounds.y + self.padding,
-                width: width,
-                height: height,
+                width,
+                height,
             },
             padding: self.padding,
             displacement: 0,
@@ -1578,7 +1654,7 @@ impl<'a, 'b> ContainerBuilder<'a, 'b> {
                 x: self.bounds.x + self.padding,
                 y: self.bounds.y + self.bounds.height + self.padding,
                 width: self.bounds.width - self.padding * 2,
-                height: height,
+                height,
             },
             padding: self.padding,
             displacement: 0,
@@ -1602,7 +1678,7 @@ impl<'a, 'b> ContainerBuilder<'a, 'b> {
                 x: self.bounds.x + self.padding,
                 y: self.bounds.y + self.bounds.height + self.padding,
                 width: self.bounds.width - self.padding * 2,
-                height: height,
+                height,
             },
             padding: self.padding,
             displacement: 0,
@@ -1844,7 +1920,7 @@ impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
                 x: self.bounds.x + self.padding,
                 y: self.displacement + self.padding,
                 width: self.bounds.width - self.padding * 2,
-                height: height,
+                height,
             },
             padding: self.padding,
             displacement: 0,
@@ -1867,7 +1943,7 @@ impl<'a, 'b> ScrollBoxContainerBuilder<'a, 'b> {
                 x: self.bounds.x + self.padding,
                 y: self.displacement + self.padding,
                 width: self.bounds.width - self.padding * 2,
-                height: height,
+                height,
             },
             padding: self.padding,
             displacement: 0,
@@ -2158,7 +2234,7 @@ impl<'a, 'b> ReversedScrollBoxContainerBuilder<'a, 'b> {
                 x: self.bounds.x + self.padding,
                 y: self.displacement + self.padding,
                 width: self.bounds.width - self.padding * 2,
-                height: height,
+                height,
             },
             padding: self.padding,
             displacement: 0,
@@ -2182,7 +2258,7 @@ impl<'a, 'b> ReversedScrollBoxContainerBuilder<'a, 'b> {
                 x: self.bounds.x + self.padding,
                 y: self.displacement + self.padding,
                 width: self.bounds.width - self.padding * 2,
-                height: height,
+                height,
             },
             padding: self.padding,
             displacement: 0,
@@ -2340,6 +2416,7 @@ pub fn split_text(
 ) -> Vec<Arc<str>> {
     let mut out = Vec::new();
     let mut current = String::new();
+    let mut dw = 0;
     for i in text.chars() {
         if i == '\n' {
             current.pop();
@@ -2347,12 +2424,18 @@ pub fn split_text(
             current.clear();
         } else {
             current.push(i);
-            let nw = handle.measure_text(&current, text_height);
+            let glyph = i;
+            let mut s = [0u8; 8];
+            let st = glyph.encode_utf8(&mut s);
+            let nw = handle.measure_text(st, text_height) + dw;
             if nw >= width {
+                dw = 0;
                 current.pop();
                 out.push(current.clone().into());
                 current.clear();
                 current.push(i)
+            } else {
+                dw = nw;
             }
         }
     }
@@ -2370,6 +2453,12 @@ pub struct GUI<'a> {
     thread: &'a RaylibThread,
     style: Style,
 }
+impl Default for Style {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Style {
     pub fn new() -> Self {
         Self {
@@ -2465,14 +2554,19 @@ impl<'a> GUI<'a> {
         let mut cmds = CommandBufferBuilder::new();
         cmds.clear_background(self.style.background_color);
         for i in &mut self.widgets {
-            i.render(&self.handle, &self.thread, &mut cmds);
+            i.render(self.handle, self.thread, &mut cmds);
         }
         cmds.build()
     }
 
     pub fn render(&mut self) {
         let cmds = self.render_commands();
-        cmds.run(&mut self.handle, &self.thread);
+        cmds.run(self.handle, self.thread);
+    }
+
+    pub fn render_fps(&mut self) {
+        let cmds = self.render_commands();
+        cmds.run_fps(self.handle, self.thread);
     }
 
     pub fn centered_horizontal<'b>(
