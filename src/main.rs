@@ -10,7 +10,10 @@ pub struct State {
     scroll_box_data: ScrollBoxData,
     text_box_data: TextBoxData,
 }
+
+pub mod engine;
 pub mod gui;
+pub mod utils;
 #[tokio::main]
 async fn main() {
     let mut state = State {
@@ -42,7 +45,7 @@ async fn main() {
                 });
             });
             let nyan = nyan.clone();
-            cmds.canvas(512,512,move |bounds, state, cmds, handle,_thread|{
+            cmds.canvas(512,512,move |_bounds, state, cmds, handle,_thread|{
                 cmds.draw_texture_scaled_rotated(&nyan, 128,128, 256, 256 ,state.rotation);
                state.rotation += handle.get_frame_time()*90.;
             });
