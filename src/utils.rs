@@ -1,6 +1,12 @@
-use std::{collections::VecDeque, marker::PhantomData, sync::Arc, task::Waker};
+use std::{
+    collections::VecDeque,
+    marker::PhantomData,
+    sync::{Arc, atomic::AtomicBool},
+    task::Waker,
+    time::Duration,
+};
 
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
@@ -10,12 +16,14 @@ use tokio::{
 pub struct Stream<T: Serialize + DeserializeOwned> {
     data: PhantomData<T>,
     stream: Mutex<TcpStream>,
+    has_failed_at_some_point: AtomicBool,
 }
 impl<T: DeserializeOwned + Serialize> Stream<T> {
     pub fn new(st: TcpStream) -> Self {
         Self {
             data: Default::default(),
             stream: Mutex::new(st),
+            has_failed_at_some_point: AtomicBool::new(false),
         }
     }
 
@@ -23,8 +31,28 @@ impl<T: DeserializeOwned + Serialize> Stream<T> {
         let v = serde_json::to_vec(value).unwrap();
         let count = v.len();
         let mut guard = self.stream.lock().await;
-        guard.write_u64_le(count as u64).await?;
-        guard.write_all(&v).await?;
+        if let Err(e) = guard.write_u64_le(count as u64).await {
+            match e.kind() {
+                std::io::ErrorKind::ConnectionReset => {}
+                std::io::ErrorKind::WouldBlock => {}
+                _ => {
+                    self.has_failed_at_some_point
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+            return Err(e);
+        };
+        if let Err(e) = guard.write_all(&v).await {
+            match e.kind() {
+                std::io::ErrorKind::ConnectionReset => {}
+                std::io::ErrorKind::WouldBlock => {}
+                _ => {
+                    self.has_failed_at_some_point
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+            return Err(e);
+        };
         Ok(count)
     }
 
@@ -37,9 +65,23 @@ impl<T: DeserializeOwned + Serialize> Stream<T> {
 
     pub async fn receive(&self) -> Result<T, tokio::io::Error> {
         let mut guard = self.stream.lock().await;
-        let count = guard.read_u64_le().await? as usize;
+        let count = match guard.read_u64_le().await {
+            Ok(x) => x,
+            Err(y) => {
+                self.has_failed_at_some_point
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                return Err(y);
+            }
+        } as usize;
         let mut buffer = vec![0u8; count];
-        guard.read_exact(&mut buffer).await?;
+        match guard.read_exact(&mut buffer).await {
+            Ok(x) => x,
+            Err(y) => {
+                self.has_failed_at_some_point
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                return Err(y);
+            }
+        };
         let value = serde_json::from_slice(&buffer);
         match value {
             Ok(t) => Ok(t),
@@ -57,9 +99,23 @@ impl<T: DeserializeOwned + Serialize> Stream<T> {
         match g {
             Ok(x) => {
                 if x == 8 {
-                    let count = guard.read_u64_le().await?;
+                    let count = match guard.read_u64_le().await {
+                        Ok(x) => x as usize,
+                        Err(e) => {
+                            self.has_failed_at_some_point
+                                .store(true, std::sync::atomic::Ordering::SeqCst);
+                            return Err(e);
+                        }
+                    };
                     let mut v = vec![0u8; count as usize];
-                    guard.read_exact(&mut v).await?;
+                    match guard.read_exact(&mut v).await {
+                        Ok(x) => x as usize,
+                        Err(e) => {
+                            self.has_failed_at_some_point
+                                .store(true, std::sync::atomic::Ordering::SeqCst);
+                            return Err(e);
+                        }
+                    };
                     let out = serde_json::from_slice(&v)?;
                     Ok(Some(out))
                 } else {
@@ -85,6 +141,11 @@ impl<T: DeserializeOwned + Serialize> Stream<T> {
             .build()
             .unwrap()
             .block_on(self.try_receive())
+    }
+
+    pub fn has_errored_fatally(&self) -> bool {
+        self.has_failed_at_some_point
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
@@ -276,5 +337,319 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned> Iterator for Stream<T> {
             Ok(x) => x,
             Err(_) => None,
         }
+    }
+}
+
+#[tokio::test]
+pub async fn pipe_test() {
+    use tokio::task::yield_now;
+    async fn test(pipe: BPipe<i32>) {
+        let mut primes: Vec<i32> = Vec::new();
+        let mut current = 2;
+        loop {
+            if let Some(_) = pipe.try_receive() {
+                break;
+            }
+            let mut is_prime = true;
+            for j in &primes {
+                if current % *j == 0 {
+                    is_prime = false;
+                    break;
+                }
+            }
+            if is_prime {
+                pipe.send(current);
+                primes.push(current);
+            }
+            current += 1;
+            yield_now().await;
+        }
+    }
+    let mut pipes = Vec::new();
+    let mut futures = Vec::new();
+    for _ in 0..4 {
+        let (t1, t2) = BPipe::<i32>::create();
+        pipes.push(t1);
+        futures.push(tokio::spawn(test(t2)));
+    }
+    loop {
+        let mut hit = false;
+        for (idx, i) in pipes.iter().enumerate() {
+            let x0 = i.receive().await.unwrap();
+            {
+                use std::io::Write;
+                writeln!(std::io::stderr(), "async idx:{} value:{}", idx, x0).unwrap();
+            }
+            if x0 > 100 {
+                hit = true;
+            }
+        }
+        if hit {
+            for j in &pipes {
+                j.send(-1);
+            }
+            for i in futures {
+                i.await.unwrap();
+            }
+            break;
+        }
+    }
+}
+
+#[test]
+pub fn pipe_test_sync() {
+    fn test(pipe: BPipe<i32>) {
+        let mut primes: Vec<i32> = Vec::new();
+        let mut current = 2;
+        loop {
+            if let Some(_) = pipe.try_receive() {
+                break;
+            }
+            let mut is_prime = true;
+            for j in &primes {
+                if current % *j == 0 {
+                    is_prime = false;
+                    break;
+                }
+            }
+            if is_prime {
+                pipe.send(current);
+                primes.push(current);
+            }
+            current += 1;
+            std::thread::yield_now();
+        }
+    }
+    let mut pipes = Vec::new();
+    let mut futures = Vec::new();
+    for _ in 0..4 {
+        let (t1, t2) = BPipe::<i32>::create();
+        pipes.push(t1);
+        futures.push(std::thread::spawn(|| {
+            test(t2);
+        }));
+    }
+    loop {
+        let mut hit = false;
+        for (idx, i) in pipes.iter().enumerate() {
+            let x0 = i.receive_blocking().unwrap();
+            {
+                use std::io::Write;
+                writeln!(std::io::stderr(), "sync idx:{} value:{}", idx, x0).unwrap();
+            }
+            if x0 > 100 {
+                hit = true;
+            }
+        }
+        if hit {
+            for j in &pipes {
+                j.send(-1);
+            }
+            for i in futures {
+                i.join().unwrap();
+            }
+            break;
+        }
+    }
+}
+
+#[test]
+#[should_panic]
+pub fn pipe_test_sync_fail() {
+    fn test(pipe: BPipe<i32>) {
+        let mut primes: Vec<i32> = Vec::new();
+        let mut current = 2;
+        loop {
+            if let Some(_) = pipe.try_receive() {
+                break;
+            }
+            let mut is_prime = true;
+            for j in &primes {
+                if current % *j == 0 {
+                    is_prime = false;
+                    break;
+                }
+            }
+            if is_prime {
+                pipe.send(current);
+                primes.push(current);
+            }
+            current += 1;
+            if current == 93 {
+                pipe.receive_blocking().unwrap();
+            }
+            std::thread::yield_now();
+        }
+    }
+    let mut pipes = Vec::new();
+    let mut futures = Vec::new();
+    for _ in 0..4 {
+        let (t1, t2) = BPipe::<i32>::create();
+        pipes.push(t1);
+        futures.push(std::thread::spawn(|| {
+            test(t2);
+        }));
+    }
+    loop {
+        let mut hit = false;
+        for (idx, i) in pipes.iter().enumerate() {
+            let x0 = i.receive_blocking().unwrap();
+            {
+                use std::io::Write;
+                writeln!(std::io::stderr(), "sync fail idx:{} value:{}", idx, x0).unwrap();
+            }
+            if x0 > 100 {
+                hit = true;
+            }
+        }
+        if hit {
+            for j in &pipes {
+                j.send(-1);
+            }
+            for i in futures {
+                i.join().unwrap();
+            }
+            break;
+        }
+    }
+}
+
+#[tokio::test]
+#[should_panic]
+pub async fn pipe_test_fail() {
+    use tokio::task::yield_now;
+    async fn test(pipe: BPipe<i32>) {
+        let mut primes: Vec<i32> = Vec::new();
+        let mut current = 2;
+        loop {
+            if let Some(_) = pipe.try_receive() {
+                break;
+            }
+            let mut is_prime = true;
+            for j in &primes {
+                if current % *j == 0 {
+                    is_prime = false;
+                    break;
+                }
+            }
+            if is_prime {
+                pipe.send(current);
+                primes.push(current);
+            }
+            current += 1;
+            if current == 93 {
+                pipe.receive().await.unwrap();
+            }
+            yield_now().await;
+        }
+    }
+    let mut pipes = Vec::new();
+    let mut futures = Vec::new();
+    for _ in 0..4 {
+        let (t1, t2) = BPipe::<i32>::create();
+        pipes.push(t1);
+        futures.push(tokio::spawn(test(t2)));
+    }
+    loop {
+        let mut hit = false;
+        for (idx, i) in pipes.iter().enumerate() {
+            let x0 = i.receive().await.unwrap();
+            {
+                use std::io::Write;
+                writeln!(std::io::stderr(), "async fail idx:{} value:{}", idx, x0).unwrap();
+            }
+            if x0 > 100 {
+                hit = true;
+            }
+        }
+        if hit {
+            for j in &pipes {
+                j.send(-1);
+            }
+            for i in futures {
+                i.await.unwrap();
+            }
+            break;
+        }
+    }
+}
+
+static HWID: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+pub fn generate_id() -> ObjectId {
+    let mut _hwid = match HWID.lock() {
+        Ok(x) => x,
+        Err(e) => e.into_inner(),
+    };
+    if _hwid.is_none() {
+        *_hwid = Some(hardware_id::get_id().unwrap());
+    }
+    let hwid = _hwid.as_ref().unwrap();
+    let value = std::time::SystemTime::now();
+    //if this is not unique idk what is
+    ObjectId {
+        id: Some(
+            format!(
+                "{}-{:#?}-{:#?}-{:#?}",
+                hwid,
+                std::thread::current().id(),
+                std::process::id(),
+                value
+            )
+            .into(),
+        ),
+    }
+}
+
+#[test]
+pub fn id_test() {
+    let mut list = std::collections::HashSet::new();
+    for _ in 0..10000 {
+        let tmp = generate_id();
+        assert!(!list.contains(&tmp));
+        //writeln!(stderr(), "{:#?}", tmp).unwrap();
+        list.insert(tmp);
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ObjectId {
+    id: Option<Arc<str>>,
+}
+
+pub struct Timer {
+    start: std::time::Instant,
+}
+impl Timer {
+    pub fn since(&self) -> Duration {
+        let time = self.start.elapsed();
+        time
+    }
+    pub fn new() -> Self {
+        Self {
+            start: std::time::Instant::now(),
+        }
+    }
+}
+impl Drop for Timer {
+    fn drop(&mut self) {
+        println!("took:{:#?}", self.since());
+    }
+}
+
+impl ObjectId {
+    pub const fn is_valid(&self) -> bool {
+        self.id.is_some()
+    }
+
+    pub const fn is_invalid(&self) -> bool {
+        self.id.is_none()
+    }
+
+    pub const fn new_invalid() -> Self {
+        Self { id: None }
+    }
+
+    pub fn new() -> Self {
+        generate_id()
     }
 }

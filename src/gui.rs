@@ -15,13 +15,14 @@ use raylib::{
     shaders::Shader,
     texture::{RaylibTexture2D, RenderTexture2D, Texture2D},
 };
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Point {
     pub x: i32,
     pub y: i32,
 }
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Bounds {
     pub x: i32,
     pub y: i32,
