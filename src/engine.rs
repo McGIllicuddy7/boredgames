@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     error::Error,
+    process::{Output, id},
     sync::{Arc, Mutex},
 };
 
@@ -13,7 +14,7 @@ use raylib::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    gui::{Bounds, GUI, Point, ScrollBoxData},
+    gui::{Bounds, GUI, Point, ScrollBoxData, TextBoxData},
     utils::{ObjectId, Stream, generate_id},
 };
 
@@ -42,6 +43,7 @@ pub struct BoardState {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Object {
+    pub name: String,
     pub owner: UserId,
     pub id: ObjectId,
     pub bounds: Bounds,
@@ -131,6 +133,7 @@ pub enum EventData {
 pub struct ClientState {
     pub con: Option<Stream<Event>>,
     pub gui_state: ClientGuiState,
+    pub name_input: TextBoxData,
 }
 
 #[derive(Clone, Debug)]
@@ -141,6 +144,8 @@ pub struct ClientGuiState {
     pub messages: Vec<Message>,
     pub image_scroll: ScrollBoxData,
     pub client_mode: ClientMode,
+    pub next_object_name: String,
+    pub should_enumerate: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -158,6 +163,27 @@ pub enum ClientMode {
     DrawingModeCircle { start: Point, object: ObjectId },
     DrawingModeRectangle { start: Point, object: ObjectId },
     ClientModeDrawingLine { start: Point, object: ObjectId },
+}
+
+impl ClientGuiState {
+    pub fn next_name(&self) -> String {
+        let base = self.next_object_name.clone();
+        let mut act = base.clone();
+        let mut count = 1;
+        if self.should_enumerate {
+            'outer: loop {
+                for (_, i) in &self.state.objects {
+                    if i.name == act {
+                        act = format!("{}{}", base, count);
+                        count += 1;
+                        continue 'outer;
+                    }
+                }
+                break 'outer;
+            }
+        }
+        act
+    }
 }
 impl ClientMode {
     pub fn name(&self) -> &'static str {
@@ -280,8 +306,36 @@ impl ClientState {
         let mut ns = self.gui_state.clone();
         let mut gui = GUI::new(&mut ns, handle, thread);
         gui.centered_horizontal(|gui| {
-            let dim = 50;
+            let dim = 25;
             let sz = 1000 / dim;
+            gui.container(300, |gui| {
+                let ident = match &ns.client_mode {
+                    ClientMode::SelectMode { selected_object: _ }
+                    | ClientMode::ClientModeDrawingLine {
+                        start: _,
+                        object: _,
+                    }
+                    | ClientMode::DrawingModeCircle {
+                        start: _,
+                        object: _,
+                    }
+                    | ClientMode::PlacingTokens { selected_image: _ }
+                    | ClientMode::DrawingModeRectangle {
+                        start: _,
+                        object: _,
+                    } => "object name",
+                };
+                gui.p1(ident.to_string() + " entry");
+                gui.text_input(&self.name_input, 16, 32);
+                gui.p1(format!("object name:{}", ns.next_object_name));
+                if ns.should_enumerate {
+                    gui.button("stop enumeration", 16, |ns| {
+                        ns.should_enumerate = false;
+                    });
+                } else {
+                    gui.button("enumerate", 16, |ns| ns.should_enumerate = true);
+                }
+            });
             #[allow(unused)]
             gui.canvas(1000, 1000, move |bounds, state, cmds, handle, thread| {
                 let mouse_pressed =
@@ -371,9 +425,9 @@ impl ClientState {
                         }
                         ObjectData::DrawingCircle { tint } => {
                             cmds.draw_circle(
-                                obj.bounds.x * dim + obj.bounds.width / 2,
-                                obj.bounds.y * dim + obj.bounds.width / 2,
-                                (obj.bounds.width as f32 / 2.),
+                                obj.bounds.x * dim + obj.bounds.width * dim / 2,
+                                obj.bounds.y * dim + obj.bounds.width * dim / 2,
+                                (obj.bounds.width as f32 / 2. * dim as f32),
                                 Color {
                                     r: tint.r,
                                     g: tint.g,
@@ -401,14 +455,24 @@ impl ClientState {
                         ObjectData::Text { text, height } => {
                             cmds.draw_text(
                                 (Arc::<str>::from(text.as_str())),
-                                bounds.x,
-                                bounds.y,
+                                obj.bounds.x,
+                                obj.bounds.y,
                                 *height,
                                 Color::BLACK,
                             );
                         }
                     }
+                    if !obj.name.is_empty() {
+                        cmds.draw_text(
+                            obj.name.clone(),
+                            obj.bounds.x * dim,
+                            obj.bounds.y * dim + obj.bounds.height * dim + 5,
+                            16,
+                            Color::BLACK,
+                        );
+                    }
                 }
+                let mut nm = state.next_name();
                 match &mut state.client_mode {
                     ClientMode::SelectMode { selected_object } => {
                         if let Some(g) = state.state.objects.get_mut(&selected_object) {
@@ -456,7 +520,7 @@ impl ClientState {
                                     cmds.draw_circle(
                                         mouse_pos.x,
                                         mouse_pos.y,
-                                        (g.bounds.width as f32 / 2.),
+                                        (g.bounds.width as f32 / 2.) * dim as f32,
                                         Color {
                                             r: tint.r,
                                             g: tint.g,
@@ -499,6 +563,15 @@ impl ClientState {
                                         Color::BLACK,
                                     );
                                 }
+                            }
+                            if !g.name.is_empty() {
+                                cmds.draw_text(
+                                    g.name.clone(),
+                                    mouse_pos.x,
+                                    mouse_pos.y + g.bounds.height * dim,
+                                    16,
+                                    Color::BLACK,
+                                );
                             }
                             if mouse_released {
                                 let p0_x = mouse_pos.x / dim - g.bounds.width / 2;
@@ -547,6 +620,7 @@ impl ClientState {
                                 let p0_y = mouse_pos.y / dim;
                                 let id = ObjectId::new();
                                 let obj = Object {
+                                    name: nm,
                                     owner: state.id.clone(),
                                     id: id.clone(),
                                     bounds: Bounds {
@@ -620,9 +694,11 @@ impl ClientState {
                     && mouse_pos.x <= 1000
                     && mouse_pos.y <= 1000
                 {
-                    if handle.is_key_pressed(raylib::ffi::KeyboardKey::KEY_C) && mouse_down {
+                    if handle.is_key_down(raylib::ffi::KeyboardKey::KEY_C) && mouse_pressed {
                         let id = generate_id();
+                        let nm = state.next_name();
                         let mut object = Object {
+                            name: nm,
                             owner: state.id.clone(),
                             id: id.clone(),
                             bounds: Bounds {
@@ -646,9 +722,11 @@ impl ClientState {
                             object: id,
                         };
                     }
-                    if handle.is_key_pressed(raylib::ffi::KeyboardKey::KEY_R) && mouse_down {
+                    if handle.is_key_down(raylib::ffi::KeyboardKey::KEY_R) && mouse_pressed {
                         let id = generate_id();
+                        let nm = state.next_name();
                         let mut object = Object {
+                            name: nm,
                             owner: state.id.clone(),
                             id: id.clone(),
                             bounds: Bounds {
@@ -675,9 +753,11 @@ impl ClientState {
                             object: id,
                         };
                     }
-                    if handle.is_key_pressed(raylib::ffi::KeyboardKey::KEY_L) && mouse_down {
+                    if handle.is_key_down(raylib::ffi::KeyboardKey::KEY_S) && mouse_pressed {
                         let id = generate_id();
+                        let nm = state.next_name();
                         let mut object = Object {
+                            name: nm,
                             owner: state.id.clone(),
                             id: id.clone(),
                             bounds: Bounds {
@@ -713,7 +793,7 @@ impl ClientState {
                     };
                 });
                 gui.scroll_box(900, &self.gui_state.image_scroll, |gui| {
-                    for (name, img) in &self.gui_state.state.images {
+                    for (name, _img) in &self.gui_state.state.images {
                         let n2 = name.clone();
                         gui.button_1(&name, move |state| {
                             state.client_mode = ClientMode::PlacingTokens {
@@ -726,6 +806,9 @@ impl ClientState {
         });
         gui.render(&mut ns);
         self.gui_state = ns;
+        if let Some(x) = self.name_input.output() {
+            self.gui_state.next_object_name = x;
+        }
         Ok(())
     }
 
@@ -747,6 +830,7 @@ impl ClientState {
         let mut slf = Self {
             con,
             gui_state: ClientGuiState {
+                should_enumerate: true,
                 id: UserId::new(),
                 state: BoardState {
                     objects: HashMap::new(),
@@ -760,7 +844,9 @@ impl ClientState {
                 client_mode: ClientMode::SelectMode {
                     selected_object: ObjectId::new_invalid(),
                 },
+                next_object_name: String::new(),
             },
+            name_input: TextBoxData::new(),
         };
         slf.load_image(handle, thread, "orc.png");
         slf.load_image(handle, thread, "nyancat.png");

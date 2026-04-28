@@ -12,8 +12,8 @@ pub mod utils;
 async fn main() {
     let (mut handle, thread) = raylib::RaylibBuilder::default()
         .resizable()
-        .width(3 * 1920 / 4)
-        .height(3 * 1080 / 4)
+        .width(9 * 1920 / 10)
+        .height(9 * 1080 / 10)
         .build();
     engine::ClientState::create_and_run(None, &mut handle, &thread).await;
 }

@@ -705,7 +705,7 @@ impl CommandBuffer {
                         x: 0.0,
                         y: 0.0,
                         width: image.width() as f32,
-                        height: image.height() as f32,
+                        height: -image.height() as f32,
                     },
                     Rectangle {
                         x: bounds.x as f32 + (bounds.width / 2) as f32,
@@ -731,7 +731,7 @@ impl CommandBuffer {
                         x: 0.0,
                         y: 0.0,
                         width: image.width() as f32,
-                        height: image.height() as f32,
+                        height: -image.height() as f32,
                     },
                     Rectangle {
                         x: bounds.x as f32,

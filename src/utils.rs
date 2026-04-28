@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
-    sync::Mutex,
+    sync::{Mutex, MutexGuard},
 };
 
 pub struct Stream<T: Serialize + DeserializeOwned> {
@@ -651,5 +651,223 @@ impl ObjectId {
 
     pub fn new() -> Self {
         generate_id()
+    }
+}
+
+pub struct SharedListInner<T> {
+    list: VecDeque<T>,
+    mutated: bool,
+}
+
+pub struct SharedList<T> {
+    inner: Arc<Mutex<SharedListInner<T>>>,
+}
+
+pub struct SharedListGuard<'a, T> {
+    inner: MutexGuard<'a, SharedListInner<T>>,
+}
+
+impl<'a, T> std::ops::Deref for SharedListGuard<'a, T> {
+    type Target = VecDeque<T>;
+    fn deref(&self) -> &Self::Target {
+        &self.inner.deref().list
+    }
+}
+pub struct SharedListGuardMut<'a, T> {
+    inner: MutexGuard<'a, SharedListInner<T>>,
+}
+impl<'a, T> std::ops::Deref for SharedListGuardMut<'a, T> {
+    type Target = VecDeque<T>;
+    fn deref(&self) -> &Self::Target {
+        &self.inner.deref().list
+    }
+}
+
+impl<'a, T> std::ops::DerefMut for SharedListGuardMut<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner.deref_mut().list
+    }
+}
+impl<T> Clone for SharedList<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+impl<T> SharedList<T> {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(SharedListInner {
+                list: VecDeque::new(),
+                mutated: true,
+            })),
+        }
+    }
+
+    pub async fn lock_mut<'a>(&'a self) -> SharedListGuardMut<'a, T> {
+        let mut tmp = self.inner.lock().await;
+        tmp.mutated = true;
+        SharedListGuardMut { inner: tmp }
+    }
+
+    pub async fn lock<'a>(&'a self) -> SharedListGuard<'a, T> {
+        let tmp = self.inner.lock().await;
+        SharedListGuard { inner: tmp }
+    }
+
+    pub fn lock_mut_blocking<'a>(&'a self) -> SharedListGuardMut<'a, T> {
+        let mut tmp = self.inner.blocking_lock();
+        tmp.mutated = true;
+        SharedListGuardMut { inner: tmp }
+    }
+
+    pub fn lock_blocking<'a>(&'a self) -> SharedListGuard<'a, T> {
+        let tmp = self.inner.blocking_lock();
+        SharedListGuard { inner: tmp }
+    }
+
+    pub fn try_lock_mut<'a>(&'a self) -> Option<SharedListGuardMut<'a, T>> {
+        let Ok(mut tmp) = self.inner.try_lock() else {
+            return None;
+        };
+        tmp.mutated = true;
+        Some(SharedListGuardMut { inner: tmp })
+    }
+
+    pub fn try_lock<'a>(&'a self) -> Option<SharedListGuard<'a, T>> {
+        let Ok(tmp) = self.inner.try_lock() else {
+            return None;
+        };
+        Some(SharedListGuard { inner: tmp })
+    }
+
+    pub async fn push_front(&self, value: T) {
+        self.lock_mut().await.push_front(value);
+    }
+
+    pub async fn pop_front(&self) -> Option<T> {
+        self.lock_mut().await.pop_front()
+    }
+
+    pub async fn push_back(&self, value: T) {
+        self.lock_mut().await.push_back(value);
+    }
+
+    pub async fn pop_back(&self) -> Option<T> {
+        self.lock_mut().await.pop_back()
+    }
+
+    pub async fn take(&self, at: usize) -> Option<T> {
+        self.lock_mut().await.remove(at)
+    }
+
+    pub async fn replace(&self, at: usize, mut value: T) -> Result<T, T> {
+        if let Some(x) = self.lock_mut().await.get_mut(at) {
+            std::mem::swap(x, &mut value);
+            Ok(value)
+        } else {
+            Err(value)
+        }
+    }
+
+    pub async fn set(&self, at: usize, value: T) {
+        _ = self.replace(at, value).await;
+    }
+
+    pub async fn insert(&self, at: usize, value: T) -> Result<(), T> {
+        let mut guard = self.lock_mut().await;
+        if guard.len() < at {
+            Err(value)
+        } else {
+            guard.insert(at, value);
+            Ok(())
+        }
+    }
+
+    pub async fn peek_mutated(&self) -> bool {
+        let tmp = self.inner.lock().await;
+        tmp.mutated
+    }
+
+    pub async fn consume_mutated(&self) -> bool {
+        let mut tmp = self.inner.lock().await;
+        let out = tmp.mutated;
+        tmp.mutated = false;
+        out
+    }
+
+    pub fn push_front_blocking(&self, value: T) {
+        self.lock_mut_blocking().push_front(value);
+    }
+
+    pub async fn pop_front_blocking(&self) -> Option<T> {
+        self.lock_mut_blocking().pop_front()
+    }
+
+    pub async fn push_back_blocking(&self, value: T) {
+        self.lock_mut_blocking().push_back(value);
+    }
+
+    pub async fn pop_back_blocking(&self) -> Option<T> {
+        self.lock_mut_blocking().pop_back()
+    }
+
+    pub async fn take_blocking(&self, at: usize) -> Option<T> {
+        self.lock_mut_blocking().remove(at)
+    }
+
+    pub fn replace_blocking(&self, at: usize, mut value: T) -> Result<T, T> {
+        if let Some(x) = self.lock_mut_blocking().get_mut(at) {
+            std::mem::swap(x, &mut value);
+            Ok(value)
+        } else {
+            Err(value)
+        }
+    }
+
+    pub fn set_blocking(&self, at: usize, value: T) {
+        _ = self.replace_blocking(at, value);
+    }
+
+    pub fn insert_blocking(&self, at: usize, value: T) -> Result<(), T> {
+        let mut guard = self.lock_mut_blocking();
+        if guard.len() < at {
+            Err(value)
+        } else {
+            guard.insert(at, value);
+            Ok(())
+        }
+    }
+
+    pub async fn peek_mutated_blocking(&self) -> bool {
+        let tmp = self.inner.blocking_lock();
+        tmp.mutated
+    }
+
+    pub fn consume_mutated_blocking(&self) -> bool {
+        let mut tmp = self.inner.blocking_lock();
+        let out = tmp.mutated;
+        tmp.mutated = false;
+        out
+    }
+
+    pub async fn len(&self) -> usize {
+        self.lock().await.len()
+    }
+
+    pub fn len_blocking(&self) -> usize {
+        self.lock_blocking().len()
+    }
+}
+
+impl<T: Clone> SharedList<T> {
+    pub async fn get(&self, at: usize) -> Option<T> {
+        self.lock().await.get(at).map(|i| i.clone())
+    }
+
+    pub fn get_blocking(&self, at: usize) -> Option<T> {
+        self.lock_blocking().get(at).map(|i| i.clone())
     }
 }
