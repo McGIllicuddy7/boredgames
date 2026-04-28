@@ -17,12 +17,12 @@ use raylib::{
 };
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Point {
     pub x: i32,
     pub y: i32,
 }
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Bounds {
     pub x: i32,
     pub y: i32,
