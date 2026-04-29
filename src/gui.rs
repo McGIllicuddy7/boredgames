@@ -289,7 +289,7 @@ impl DrawCommand {
             DrawCommand::DrawCircle { x, y, r, color: _ } => {
                 *x = (*x as f32 * scale_x) as i32;
                 *y = (*y as f32 * scale_y) as i32;
-                *r *= (scale_x + scale_y) / 2. as f32;
+                *r *= (scale_x + scale_y) / 2_f32;
             }
             DrawCommand::DrawLine {
                 x0,
@@ -688,7 +688,7 @@ impl CommandBuffer {
                 color,
                 text,
             } => {
-                handle.draw_text(&text, *pos_x, *pos_y, *text_height, *color);
+                handle.draw_text(text, *pos_x, *pos_y, *text_height, *color);
             }
             DrawCommand::ClearBackground { color } => {
                 handle.clear_background(*color);
@@ -838,7 +838,7 @@ impl CommandBuffer {
                 color,
                 text,
             } => {
-                handle.draw_text(&text, *pos_x, *pos_y, *text_height, *color);
+                handle.draw_text(text, *pos_x, *pos_y, *text_height, *color);
             }
             DrawCommand::ClearBackground { color } => {
                 handle.clear_background(*color);
@@ -965,11 +965,23 @@ pub struct TextBoxData {
     pub output: Rc<RefCell<Option<String>>>,
     pub is_selected: Rc<RefCell<bool>>,
 }
+impl Default for ScrollBoxData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ScrollBoxData {
     pub fn new() -> Self {
         Self {
             value: Rc::new(RefCell::new(0.0)),
         }
+    }
+}
+
+impl Default for TextBoxData {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -2039,7 +2051,7 @@ impl<'a, State> HorizontalContainerBuilder<'a, State> {
         let w = width;
         let x0 = self.bounds.x + self.bounds.width + self.padding;
         let y0 = self.bounds.y + self.padding;
-        let split = split_text(&*data.text.borrow(), self.handle, w, text_height);
+        let split = split_text(&data.text.borrow(), self.handle, w, text_height);
         let tmp = height + self.padding * 2;
         if tmp > self.bounds.height {
             self.bounds.height = tmp;
@@ -2112,7 +2124,7 @@ impl<'a, State> ContainerBuilder<'a, State> {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
         let y0 = self.bounds.y + self.bounds.height + self.padding;
-        let split = split_text(&*data.text.borrow(), self.handle, w, text_height);
+        let split = split_text(&data.text.borrow(), self.handle, w, text_height);
         self.bounds.height += height + self.padding;
         self.children.push(Widget::TextInput {
             style: self.style,
@@ -2476,7 +2488,7 @@ impl<'a, State> ScrollBoxContainerBuilder<'a, State> {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
         let y0 = self.displacement + self.padding;
-        let split = split_text(&*data.text.borrow(), self.handle, w, text_height);
+        let split = split_text(&data.text.borrow(), self.handle, w, text_height);
         self.displacement += height + self.padding;
         self.children.push(Widget::TextInput {
             style: self.style,
@@ -2845,7 +2857,7 @@ impl<'a, State> ReversedScrollBoxContainerBuilder<'a, State> {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
         let y0 = self.displacement + self.padding;
-        let split = split_text(&*data.text.borrow(), self.handle, w, text_height);
+        let split = split_text(&data.text.borrow(), self.handle, w, text_height);
         self.displacement += height + self.padding;
         self.children.push(Widget::TextInput {
             style: self.style,

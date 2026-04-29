@@ -57,6 +57,7 @@ name = "boredgames"
 version = "0.1.0"
 dependencies = [
  "hardware-id",
+ "libc",
  "local-ip",
  "raylib",
  "rmp-serde",

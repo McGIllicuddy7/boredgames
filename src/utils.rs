@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
-    sync::{Mutex, MutexGuard},
+    sync::Mutex,
 };
 
 pub struct Stream<T: Serialize + DeserializeOwned> {
@@ -128,7 +128,7 @@ impl<T: DeserializeOwned + Serialize> Stream<T> {
                     };
                     let mut v = vec![0u8; count as usize];
                     match guard.read_exact(&mut v).await {
-                        Ok(x) => x as usize,
+                        Ok(x) => x,
                         Err(e) => match e.kind() {
                             tokio::io::ErrorKind::ConnectionReset => {
                                 return Ok(None);
@@ -366,10 +366,7 @@ impl<T> Iterator for BPipe<T> {
 impl<T: serde::Serialize + serde::de::DeserializeOwned> Iterator for Stream<T> {
     type Item = T;
     fn next(&mut self) -> Option<Self::Item> {
-        match self.try_receive_blocking() {
-            Ok(x) => x,
-            Err(_) => None,
-        }
+        self.try_receive_blocking().unwrap_or_default()
     }
 }
 enum BStreamInner<T: Serialize + DeserializeOwned> {
@@ -728,10 +725,16 @@ pub struct ObjectId {
 pub struct Timer {
     start: std::time::Instant,
 }
+impl Default for Timer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Timer {
     pub fn since(&self) -> Duration {
-        let time = self.start.elapsed();
-        time
+        
+        self.start.elapsed()
     }
     pub fn new() -> Self {
         Self {
@@ -742,6 +745,12 @@ impl Timer {
 impl Drop for Timer {
     fn drop(&mut self) {
         println!("took:{:#?}", self.since());
+    }
+}
+
+impl Default for ObjectId {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -805,6 +814,12 @@ impl<T> Clone for SharedList<T> {
     }
 }
 
+impl<T> Default for SharedList<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> SharedList<T> {
     pub fn new() -> Self {
         Self {
@@ -847,7 +862,7 @@ impl<T> SharedList<T> {
     }
 
     pub fn try_lock<'a>(&'a self) -> Option<SharedListGuard<'a, T>> {
-        let mut tmp = match self.inner.try_lock() {
+        let tmp = match self.inner.try_lock() {
             Ok(x) => x,
             Err(e) => match e {
                 std::sync::TryLockError::Poisoned(x) => x.into_inner(),
@@ -926,6 +941,6 @@ impl<T> SharedList<T> {
 
 impl<T: Clone> SharedList<T> {
     pub fn get(&self, at: usize) -> Option<T> {
-        self.lock().get(at).map(|i| i.clone())
+        self.lock().get(at).cloned()
     }
 }
