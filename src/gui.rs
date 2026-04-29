@@ -3229,7 +3229,7 @@ impl Style {
             container_color: Color::DARKGRAY,
             button_color: Color::GRAY,
             button_down_color: Color::DIMGRAY,
-            background_color: Color::WHITE,
+            background_color: Color::DARKGRAY,
             outline_color: Color::BLACK,
             padding: 5,
             header_height: 48,

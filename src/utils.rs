@@ -64,15 +64,23 @@ impl<T: DeserializeOwned + Serialize> Stream<T> {
     }
 
     pub async fn receive(&self) -> Result<T, tokio::io::Error> {
-        let mut guard = self.stream.lock().await;
-        let count = match guard.read_u64_le().await {
-            Ok(x) => x,
-            Err(y) => {
-                self.has_failed_at_some_point
-                    .store(true, std::sync::atomic::Ordering::SeqCst);
-                return Err(y);
-            }
-        } as usize;
+        let (mut guard, count) = loop {
+            let mut guard = self.stream.lock().await;
+            let count = match guard.read_u64_le().await {
+                Ok(x) => x,
+                Err(y) => match y.kind() {
+                    std::io::ErrorKind::ConnectionReset => {
+                        continue;
+                    }
+                    _ => {
+                        self.has_failed_at_some_point
+                            .store(true, std::sync::atomic::Ordering::SeqCst);
+                        return Err(y);
+                    }
+                },
+            } as usize;
+            break (guard, count);
+        };
         let mut buffer = vec![0u8; count];
         match guard.read_exact(&mut buffer).await {
             Ok(x) => x,
@@ -95,26 +103,45 @@ impl<T: DeserializeOwned + Serialize> Stream<T> {
     pub async fn try_receive(&self) -> Result<Option<T>, tokio::io::Error> {
         let mut guard = self.stream.lock().await;
         let mut count = [0u8; 8];
-        let g = guard.peek(&mut count).await;
+        let Ok(g) = tokio::time::timeout(Duration::from_micros(1), guard.peek(&mut count)).await
+        else {
+            return Ok(None);
+        };
         match g {
             Ok(x) => {
                 if x == 8 {
                     let count = match guard.read_u64_le().await {
                         Ok(x) => x as usize,
-                        Err(e) => {
-                            self.has_failed_at_some_point
-                                .store(true, std::sync::atomic::Ordering::SeqCst);
-                            return Err(e);
-                        }
+                        Err(e) => match e.kind() {
+                            tokio::io::ErrorKind::ConnectionReset => {
+                                return Ok(None);
+                            }
+                            tokio::io::ErrorKind::WouldBlock => {
+                                return Ok(None);
+                            }
+                            _ => {
+                                self.has_failed_at_some_point
+                                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                                return Err(e);
+                            }
+                        },
                     };
                     let mut v = vec![0u8; count as usize];
                     match guard.read_exact(&mut v).await {
                         Ok(x) => x as usize,
-                        Err(e) => {
-                            self.has_failed_at_some_point
-                                .store(true, std::sync::atomic::Ordering::SeqCst);
-                            return Err(e);
-                        }
+                        Err(e) => match e.kind() {
+                            tokio::io::ErrorKind::ConnectionReset => {
+                                return Ok(None);
+                            }
+                            tokio::io::ErrorKind::WouldBlock => {
+                                return Ok(None);
+                            }
+                            _ => {
+                                self.has_failed_at_some_point
+                                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                                return Err(e);
+                            }
+                        },
                     };
                     let out = serde_json::from_slice(&v)?;
                     Ok(Some(out))
@@ -123,6 +150,7 @@ impl<T: DeserializeOwned + Serialize> Stream<T> {
                 }
             }
             Err(x) => match x.kind() {
+                std::io::ErrorKind::ConnectionReset => Ok(None),
                 std::io::ErrorKind::WouldBlock => Ok(None),
                 _ => Err(x),
             },
@@ -339,7 +367,83 @@ impl<T: serde::Serialize + serde::de::DeserializeOwned> Iterator for Stream<T> {
         }
     }
 }
+enum BStreamInner<T: Serialize + DeserializeOwned> {
+    Network(Stream<T>),
+    Local(BPipe<T>),
+}
+pub struct BStream<T: Serialize + DeserializeOwned + Clone> {
+    inner: BStreamInner<T>,
+}
+impl<T: Serialize + DeserializeOwned + Clone> BStream<T> {
+    pub fn from_stream(s: Stream<T>) -> Self {
+        Self {
+            inner: BStreamInner::Network(s),
+        }
+    }
+    pub fn from_pipe(s: BPipe<T>) -> Self {
+        Self {
+            inner: BStreamInner::Local(s),
+        }
+    }
+    pub async fn send(&self, value: &T) -> Result<(), tokio::io::Error> {
+        match &self.inner {
+            BStreamInner::Local(v) => {
+                v.send(value.clone());
+            }
+            BStreamInner::Network(v) => {
+                v.send(value).await?;
+            }
+        }
+        Ok(())
+    }
 
+    pub fn send_blocking(&self, value: &T) -> Result<(), tokio::io::Error> {
+        match &self.inner {
+            BStreamInner::Local(v) => {
+                v.send(value.clone());
+            }
+            BStreamInner::Network(v) => {
+                v.send_blocking(value)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn receive(&self) -> Result<T, tokio::io::Error> {
+        match &self.inner {
+            BStreamInner::Local(v) => v.receive().await,
+            BStreamInner::Network(v) => v.receive().await,
+        }
+    }
+
+    pub async fn try_receive(&self) -> Result<Option<T>, tokio::io::Error> {
+        match &self.inner {
+            BStreamInner::Local(v) => Ok(v.try_receive()),
+            BStreamInner::Network(v) => v.try_receive().await,
+        }
+    }
+
+    pub fn receive_blocking(&self) -> Result<T, tokio::io::Error> {
+        match &self.inner {
+            BStreamInner::Local(v) => v.receive_blocking(),
+            BStreamInner::Network(v) => v.receive_blocking(),
+        }
+    }
+
+    pub fn try_receive_blocking(&self) -> Result<Option<T>, tokio::io::Error> {
+        match &self.inner {
+            BStreamInner::Local(v) => Ok(v.try_receive()),
+            BStreamInner::Network(v) => v.try_receive_blocking(),
+        }
+    }
+
+    pub fn has_errored_fatally(&self) -> bool {
+        match &self.inner {
+            BStreamInner::Local(v) => v.has_other(),
+            BStreamInner::Network(n) => n.has_errored_fatally(),
+        }
+    }
+}
 #[tokio::test]
 pub async fn pipe_test() {
     use tokio::task::yield_now;
@@ -660,11 +764,11 @@ pub struct SharedListInner<T> {
 }
 
 pub struct SharedList<T> {
-    inner: Arc<Mutex<SharedListInner<T>>>,
+    inner: Arc<std::sync::Mutex<SharedListInner<T>>>,
 }
 
 pub struct SharedListGuard<'a, T> {
-    inner: MutexGuard<'a, SharedListInner<T>>,
+    inner: std::sync::MutexGuard<'a, SharedListInner<T>>,
 }
 
 impl<'a, T> std::ops::Deref for SharedListGuard<'a, T> {
@@ -674,7 +778,7 @@ impl<'a, T> std::ops::Deref for SharedListGuard<'a, T> {
     }
 }
 pub struct SharedListGuardMut<'a, T> {
-    inner: MutexGuard<'a, SharedListInner<T>>,
+    inner: std::sync::MutexGuard<'a, SharedListInner<T>>,
 }
 impl<'a, T> std::ops::Deref for SharedListGuardMut<'a, T> {
     type Target = VecDeque<T>;
@@ -699,72 +803,79 @@ impl<T> Clone for SharedList<T> {
 impl<T> SharedList<T> {
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(Mutex::new(SharedListInner {
+            inner: Arc::new(std::sync::Mutex::new(SharedListInner {
                 list: VecDeque::new(),
                 mutated: true,
             })),
         }
     }
 
-    pub async fn lock_mut<'a>(&'a self) -> SharedListGuardMut<'a, T> {
-        let mut tmp = self.inner.lock().await;
+    pub fn lock_mut<'a>(&'a self) -> SharedListGuardMut<'a, T> {
+        let mut tmp = match self.inner.lock() {
+            Ok(x) => x,
+            Err(x) => x.into_inner(),
+        };
         tmp.mutated = true;
         SharedListGuardMut { inner: tmp }
     }
 
-    pub async fn lock<'a>(&'a self) -> SharedListGuard<'a, T> {
-        let tmp = self.inner.lock().await;
-        SharedListGuard { inner: tmp }
-    }
-
-    pub fn lock_mut_blocking<'a>(&'a self) -> SharedListGuardMut<'a, T> {
-        let mut tmp = self.inner.blocking_lock();
-        tmp.mutated = true;
-        SharedListGuardMut { inner: tmp }
-    }
-
-    pub fn lock_blocking<'a>(&'a self) -> SharedListGuard<'a, T> {
-        let tmp = self.inner.blocking_lock();
+    pub fn lock<'a>(&'a self) -> SharedListGuard<'a, T> {
+        let tmp = match self.inner.lock() {
+            Ok(x) => x,
+            Err(x) => x.into_inner(),
+        };
         SharedListGuard { inner: tmp }
     }
 
     pub fn try_lock_mut<'a>(&'a self) -> Option<SharedListGuardMut<'a, T>> {
-        let Ok(mut tmp) = self.inner.try_lock() else {
-            return None;
+        let mut tmp = match self.inner.try_lock() {
+            Ok(x) => x,
+            Err(e) => match e {
+                std::sync::TryLockError::Poisoned(x) => x.into_inner(),
+                std::sync::TryLockError::WouldBlock => {
+                    return None;
+                }
+            },
         };
         tmp.mutated = true;
         Some(SharedListGuardMut { inner: tmp })
     }
 
     pub fn try_lock<'a>(&'a self) -> Option<SharedListGuard<'a, T>> {
-        let Ok(tmp) = self.inner.try_lock() else {
-            return None;
+        let mut tmp = match self.inner.try_lock() {
+            Ok(x) => x,
+            Err(e) => match e {
+                std::sync::TryLockError::Poisoned(x) => x.into_inner(),
+                std::sync::TryLockError::WouldBlock => {
+                    return None;
+                }
+            },
         };
         Some(SharedListGuard { inner: tmp })
     }
 
-    pub async fn push_front(&self, value: T) {
-        self.lock_mut().await.push_front(value);
+    pub fn push_front(&self, value: T) {
+        self.lock_mut().push_front(value);
     }
 
-    pub async fn pop_front(&self) -> Option<T> {
-        self.lock_mut().await.pop_front()
+    pub fn pop_front(&self) -> Option<T> {
+        self.lock_mut().pop_front()
     }
 
-    pub async fn push_back(&self, value: T) {
-        self.lock_mut().await.push_back(value);
+    pub fn push_back(&self, value: T) {
+        self.lock_mut().push_back(value);
     }
 
-    pub async fn pop_back(&self) -> Option<T> {
-        self.lock_mut().await.pop_back()
+    pub fn pop_back(&self) -> Option<T> {
+        self.lock_mut().pop_back()
     }
 
-    pub async fn take(&self, at: usize) -> Option<T> {
-        self.lock_mut().await.remove(at)
+    pub fn take(&self, at: usize) -> Option<T> {
+        self.lock_mut().remove(at)
     }
 
-    pub async fn replace(&self, at: usize, mut value: T) -> Result<T, T> {
-        if let Some(x) = self.lock_mut().await.get_mut(at) {
+    pub fn replace(&self, at: usize, mut value: T) -> Result<T, T> {
+        if let Some(x) = self.lock_mut().get_mut(at) {
             std::mem::swap(x, &mut value);
             Ok(value)
         } else {
@@ -772,12 +883,12 @@ impl<T> SharedList<T> {
         }
     }
 
-    pub async fn set(&self, at: usize, value: T) {
-        _ = self.replace(at, value).await;
+    pub fn set(&self, at: usize, value: T) {
+        _ = self.replace(at, value);
     }
 
-    pub async fn insert(&self, at: usize, value: T) -> Result<(), T> {
-        let mut guard = self.lock_mut().await;
+    pub fn insert(&self, at: usize, value: T) -> Result<(), T> {
+        let mut guard = self.lock_mut();
         if guard.len() < at {
             Err(value)
         } else {
@@ -786,88 +897,30 @@ impl<T> SharedList<T> {
         }
     }
 
-    pub async fn peek_mutated(&self) -> bool {
-        let tmp = self.inner.lock().await;
+    pub fn peek_mutated(&self) -> bool {
+        let tmp = match self.inner.lock() {
+            Ok(x) => x,
+            Err(e) => e.into_inner(),
+        };
         tmp.mutated
     }
 
     pub async fn consume_mutated(&self) -> bool {
-        let mut tmp = self.inner.lock().await;
+        let mut tmp = match self.inner.lock() {
+            Ok(x) => x,
+            Err(e) => e.into_inner(),
+        };
         let out = tmp.mutated;
         tmp.mutated = false;
         out
     }
-
-    pub fn push_front_blocking(&self, value: T) {
-        self.lock_mut_blocking().push_front(value);
-    }
-
-    pub async fn pop_front_blocking(&self) -> Option<T> {
-        self.lock_mut_blocking().pop_front()
-    }
-
-    pub async fn push_back_blocking(&self, value: T) {
-        self.lock_mut_blocking().push_back(value);
-    }
-
-    pub async fn pop_back_blocking(&self) -> Option<T> {
-        self.lock_mut_blocking().pop_back()
-    }
-
-    pub async fn take_blocking(&self, at: usize) -> Option<T> {
-        self.lock_mut_blocking().remove(at)
-    }
-
-    pub fn replace_blocking(&self, at: usize, mut value: T) -> Result<T, T> {
-        if let Some(x) = self.lock_mut_blocking().get_mut(at) {
-            std::mem::swap(x, &mut value);
-            Ok(value)
-        } else {
-            Err(value)
-        }
-    }
-
-    pub fn set_blocking(&self, at: usize, value: T) {
-        _ = self.replace_blocking(at, value);
-    }
-
-    pub fn insert_blocking(&self, at: usize, value: T) -> Result<(), T> {
-        let mut guard = self.lock_mut_blocking();
-        if guard.len() < at {
-            Err(value)
-        } else {
-            guard.insert(at, value);
-            Ok(())
-        }
-    }
-
-    pub async fn peek_mutated_blocking(&self) -> bool {
-        let tmp = self.inner.blocking_lock();
-        tmp.mutated
-    }
-
-    pub fn consume_mutated_blocking(&self) -> bool {
-        let mut tmp = self.inner.blocking_lock();
-        let out = tmp.mutated;
-        tmp.mutated = false;
-        out
-    }
-
-    pub async fn len(&self) -> usize {
-        self.lock().await.len()
-    }
-
-    pub fn len_blocking(&self) -> usize {
-        self.lock_blocking().len()
+    pub fn len(&self) -> usize {
+        self.lock().len()
     }
 }
 
 impl<T: Clone> SharedList<T> {
-    pub async fn get(&self, at: usize) -> Option<T> {
-        self.lock().await.get(at).map(|i| i.clone())
-    }
-
-    pub fn get_blocking(&self, at: usize) -> Option<T> {
-        self.lock_blocking().get(at).map(|i| i.clone())
+    pub fn get(&self, at: usize) -> Option<T> {
+        self.lock().get(at).map(|i| i.clone())
     }
 }

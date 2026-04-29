@@ -1,8 +1,9 @@
 use std::{
     collections::HashMap,
     error::Error,
+    net::IpAddr,
     process::{Output, id},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, atomic::AtomicBool},
 };
 
 use raylib::{
@@ -12,10 +13,14 @@ use raylib::{
     texture::{Image, RenderTexture2D},
 };
 use serde::{Deserialize, Serialize};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    task::yield_now,
+};
 
 use crate::{
     gui::{Bounds, GUI, Point, ScrollBoxData, TextBoxData},
-    utils::{ObjectId, Stream, generate_id},
+    utils::{BPipe, BStream, ObjectId, SharedList, Stream, generate_id},
 };
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -128,10 +133,11 @@ pub enum EventData {
     ObjectUpdated { id: ObjectId, value: Object },
     KickRequest { to_kick: UserId },
     UploadImage { name: Arc<str>, data: TImage },
+    SetBackgroundImage { to: Arc<str> },
 }
 
 pub struct ClientState {
-    pub con: Option<Stream<Event>>,
+    pub con: Option<BStream<Event>>,
     pub gui_state: ClientGuiState,
     pub name_input: TextBoxData,
 }
@@ -140,9 +146,14 @@ pub struct ClientState {
 pub struct ClientGuiState {
     pub id: UserId,
     pub state: BoardState,
+    pub user_name: Arc<str>,
     pub should_continue: bool,
     pub messages: Vec<Message>,
     pub image_scroll: ScrollBoxData,
+    pub message_scroll: ScrollBoxData,
+    pub message_input: TextBoxData,
+    pub user_scroll: ScrollBoxData,
+    pub uname_input: TextBoxData,
     pub client_mode: ClientMode,
     pub next_object_name: String,
     pub should_enumerate: bool,
@@ -169,6 +180,9 @@ impl ClientGuiState {
     pub fn next_name(&self) -> String {
         let base = self.next_object_name.clone();
         let mut act = base.clone();
+        if self.should_enumerate && act.is_empty() {
+            act = format!("1");
+        }
         let mut count = 1;
         if self.should_enumerate {
             'outer: loop {
@@ -218,97 +232,19 @@ impl ClientState {
         handle: &mut RaylibHandle,
         thread: &RaylibThread,
     ) -> Result<(), Box<dyn Error>> {
-        let mut should_send_state = false;
-        let mut new_images = Vec::new();
-        if let Some(cn) = self.con.as_ref() {
-            while let Some(i) = cn.try_receive().await? {
-                let from_name = match self.gui_state.state.people.get(&i.source) {
-                    Some(x) => x.clone(),
-                    None => "INVALID USER".into(),
-                };
-                match i.data {
-                    EventData::EntireState { state } => {
-                        self.gui_state.state = state;
-                        for (i, _) in &self.gui_state.state.images {
-                            new_images.push(i.clone());
-                        }
-                    }
-                    EventData::Message { contents } => {
-                        self.gui_state.messages.push(Message {
-                            from: i.source.clone(),
-                            from_name,
-                            contents,
-                        });
-                    }
-                    EventData::RequestEntireState => {
-                        should_send_state = true;
-                    }
-                    EventData::UserConnected { name } => {
-                        self.gui_state.state.people.insert(i.source.clone(), name);
-                    }
-                    EventData::UserDisconnected => {
-                        self.gui_state.state.people.remove(&i.source);
-                    }
-                    EventData::ObjectCreated { id, value } => {
-                        self.gui_state.state.objects.insert(id, value);
-                    }
-                    EventData::ObjectDestroyed { id } => {
-                        self.gui_state.state.objects.remove(&id);
-                    }
-                    EventData::ObjectUpdated { id, value } => {
-                        self.gui_state.state.objects.insert(id, value);
-                    }
-                    EventData::KickRequest { to_kick } => {
-                        if to_kick == self.gui_state.id {
-                            self.gui_state.should_continue = false;
-                        }
-                    }
-                    EventData::UploadImage { name, data } => {
-                        new_images.push(name.clone());
-                        self.gui_state.state.images.insert(name, data);
-                    }
-                }
-            }
-            for i in new_images {
-                let g = self.gui_state.state.images.get_mut(&i).unwrap();
-                let mut img = handle
-                    .load_render_texture(&thread, g.width as u32, g.height as u32)
-                    .unwrap();
-                let mut draw = handle.begin_texture_mode(&thread, &mut img);
-                for y in 0..g.height {
-                    for x in 0..g.width {
-                        let tmp = g.values[(y * g.width + x) as usize];
-                        draw.draw_pixel(
-                            x,
-                            y,
-                            Color {
-                                r: tmp.r,
-                                g: tmp.g,
-                                b: tmp.b,
-                                a: tmp.a,
-                            },
-                        );
-                    }
-                }
-                drop(draw);
-                g.texture = Some(Arc::new(Mutex::new(img)));
-            }
-            if should_send_state {
-                cn.send(&Event {
-                    source: self.gui_state.id.clone(),
-                    data: EventData::EntireState {
-                        state: self.gui_state.state.clone(),
-                    },
-                })
-                .await?;
-            }
-        }
         let mut ns = self.gui_state.clone();
         let mut gui = GUI::new(&mut ns, handle, thread);
+        let update_stack: SharedList<ObjectId> = SharedList::new();
+        let created_stack: SharedList<ObjectId> = SharedList::new();
+        let created_stack_act = created_stack.clone();
+        let update_stack_act = update_stack.clone();
         gui.centered_horizontal(|gui| {
             let dim = 25;
             let sz = 1000 / dim;
             gui.container(300, |gui| {
+                gui.p1(format!("username:{}", ns.user_name));
+                gui.p2("change user name");
+                gui.text_input(&ns.uname_input, 16, 32);
                 let ident = match &ns.client_mode {
                     ClientMode::SelectMode { selected_object: _ }
                     | ClientMode::ClientModeDrawingLine {
@@ -335,6 +271,12 @@ impl ClientState {
                 } else {
                     gui.button("enumerate", 16, |ns| ns.should_enumerate = true);
                 }
+                gui.p2("Connected Users");
+                gui.scroll_box(600, &ns.user_scroll, |gui| {
+                    for i in &ns.state.people {
+                        gui.p2(i.1);
+                    }
+                });
             });
             #[allow(unused)]
             gui.canvas(1000, 1000, move |bounds, state, cmds, handle, thread| {
@@ -578,6 +520,7 @@ impl ClientState {
                                 let p0_y = mouse_pos.y / dim - g.bounds.width / 2;
                                 g.bounds.x = p0_x;
                                 g.bounds.y = p0_y;
+                                update_stack.push_back(selected_object.clone());
                                 *selected_object = ObjectId::new_invalid();
                             }
                         } else {
@@ -633,6 +576,7 @@ impl ClientState {
                                         token_image_name: selected_image.clone(),
                                     },
                                 };
+                                created_stack.push_back(id.clone());
                                 state.state.objects.insert(id, obj);
                             }
                         }
@@ -663,6 +607,7 @@ impl ClientState {
                             obj.bounds.height = 1;
                         }
                         if mouse_released {
+                            created_stack.push_back(object.clone());
                             state.client_mode = ClientMode::SelectMode {
                                 selected_object: ObjectId::new_invalid(),
                             };
@@ -683,6 +628,7 @@ impl ClientState {
                             }
                         }
                         if mouse_released {
+                            created_stack.push_back(object.clone());
                             state.client_mode = ClientMode::SelectMode {
                                 selected_object: ObjectId::new_invalid(),
                             };
@@ -785,7 +731,7 @@ impl ClientState {
                     }
                 }
             });
-            gui.container(300, |gui| {
+            gui.container(250, |gui| {
                 gui.p1(format!("{:#?}", ns.client_mode.name()));
                 gui.button("deselect_image", 16, |state| {
                     state.client_mode = ClientMode::SelectMode {
@@ -803,54 +749,268 @@ impl ClientState {
                     }
                 });
             });
+            gui.container(250, |gui| {
+                gui.button_1("exit", |state| {
+                    state.should_continue = false;
+                });
+                gui.scroll_box_rev(600, &ns.message_scroll, |gui| {
+                    for i in &ns.messages {
+                        gui.p2(format!("{}:{}", i.from_name, i.contents));
+                    }
+                });
+                gui.text_input(&ns.message_input, 16, 40);
+            });
         });
         gui.render(&mut ns);
         self.gui_state = ns;
+        let mut events = Vec::new();
         if let Some(x) = self.name_input.output() {
             self.gui_state.next_object_name = x;
+        }
+        while let Some(x) = created_stack_act.pop_front() {
+            let Some(v) = self.gui_state.state.objects.get(&x) else {
+                events.push(Event {
+                    source: self.gui_state.id.clone(),
+                    data: EventData::ObjectDestroyed { id: x },
+                });
+                continue;
+            };
+            events.push(Event {
+                source: self.gui_state.id.clone(),
+                data: EventData::ObjectCreated {
+                    id: x,
+                    value: v.clone(),
+                },
+            });
+            continue;
+        }
+        while let Some(x) = update_stack_act.pop_front() {
+            let Some(v) = self.gui_state.state.objects.get(&x) else {
+                events.push(Event {
+                    source: self.gui_state.id.clone(),
+                    data: EventData::ObjectDestroyed { id: x },
+                });
+                continue;
+            };
+            events.push(Event {
+                source: self.gui_state.id.clone(),
+                data: EventData::ObjectUpdated {
+                    id: x,
+                    value: v.clone(),
+                },
+            });
+            continue;
+        }
+        if let Some(x) = self.gui_state.message_input.output() {
+            let msg = Message {
+                from: self.gui_state.id.clone(),
+                from_name: self.gui_state.user_name.clone(),
+                contents: x.into(),
+            };
+            self.gui_state.messages.push(msg.clone());
+            events.push(Event {
+                source: self.gui_state.id.clone(),
+                data: EventData::Message {
+                    contents: msg.contents.clone(),
+                },
+            });
+        }
+        if let Some(x) = self.gui_state.uname_input.output() {
+            self.gui_state.user_name = x.into();
+            self.gui_state
+                .state
+                .people
+                .insert(self.gui_state.id.clone(), self.gui_state.user_name.clone());
+            events.push(Event {
+                source: self.gui_state.id.clone(),
+                data: EventData::UserConnected {
+                    name: self.gui_state.user_name.clone(),
+                },
+            });
+        }
+        self.handle_network(events, handle, thread).await?;
+        yield_now().await;
+        Ok(())
+    }
+
+    pub async fn handle_network(
+        &mut self,
+        events: Vec<Event>,
+        handle: &mut RaylibHandle,
+        thread: &RaylibThread,
+    ) -> Result<(), Box<dyn Error>> {
+        let Some(cn) = self.con.as_mut() else {
+            return Ok(());
+        };
+        for i in events {
+            cn.send(&i).await?;
+        }
+        let mut should_send_state = false;
+        let mut new_images = Vec::new();
+        while let Some(i) = cn.try_receive().await? {
+            let from_name = match self.gui_state.state.people.get(&i.source) {
+                Some(x) => x.clone(),
+                None => "INVALID USER".into(),
+            };
+            match i.data {
+                EventData::EntireState { state } => {
+                    self.gui_state.state = state;
+                    for (i, _) in &self.gui_state.state.images {
+                        new_images.push(i.clone());
+                    }
+                }
+                EventData::Message { contents } => {
+                    self.gui_state.messages.push(Message {
+                        from: i.source.clone(),
+                        from_name,
+                        contents,
+                    });
+                }
+                EventData::RequestEntireState => {
+                    should_send_state = true;
+                }
+                EventData::UserConnected { name } => {
+                    self.gui_state.state.people.insert(i.source.clone(), name);
+                }
+                EventData::UserDisconnected => {
+                    self.gui_state.state.people.remove(&i.source);
+                }
+                EventData::ObjectCreated { id, value } => {
+                    self.gui_state.state.objects.insert(id, value);
+                }
+                EventData::ObjectDestroyed { id } => {
+                    self.gui_state.state.objects.remove(&id);
+                }
+                EventData::ObjectUpdated { id, value } => {
+                    self.gui_state.state.objects.insert(id, value);
+                }
+                EventData::KickRequest { to_kick } => {
+                    if to_kick == self.gui_state.id {
+                        self.gui_state.should_continue = false;
+                    }
+                }
+                EventData::UploadImage { name, data } => {
+                    new_images.push(name.clone());
+                    self.gui_state.state.images.insert(name, data);
+                }
+                EventData::SetBackgroundImage { to } => {
+                    self.gui_state.state.background_image = to;
+                }
+            }
+        }
+        for i in new_images {
+            let g = self.gui_state.state.images.get_mut(&i).unwrap();
+            let mut img = handle
+                .load_render_texture(&thread, g.width as u32, g.height as u32)
+                .unwrap();
+            let mut draw = handle.begin_texture_mode(&thread, &mut img);
+            for y in 0..g.height {
+                for x in 0..g.width {
+                    let tmp = g.values[(y * g.width + x) as usize];
+                    draw.draw_pixel(
+                        x,
+                        y,
+                        Color {
+                            r: tmp.r,
+                            g: tmp.g,
+                            b: tmp.b,
+                            a: tmp.a,
+                        },
+                    );
+                }
+            }
+            drop(draw);
+            g.texture = Some(Arc::new(Mutex::new(img)));
+        }
+        if should_send_state {
+            cn.send(&Event {
+                source: self.gui_state.id.clone(),
+                data: EventData::EntireState {
+                    state: self.gui_state.state.clone(),
+                },
+            })
+            .await?;
         }
         Ok(())
     }
 
-    pub async fn run(&mut self, handle: &mut RaylibHandle, thread: &RaylibThread) {
-        while let Ok(_) = self.step(handle, thread).await {
+    pub async fn run(
+        &mut self,
+        handle: &mut RaylibHandle,
+        thread: &RaylibThread,
+    ) -> Result<(), Box<dyn Error>> {
+        loop {
+            self.step(handle, thread).await?;
             if !self.gui_state.should_continue {
+                println!("should not continue");
                 break;
             }
             if handle.window_should_close() {
+                println!("window_should_close");
                 break;
             }
         }
+        println!("done");
+        Ok(())
     }
+
     pub async fn create_and_run(
-        con: Option<Stream<Event>>,
+        con: Option<BStream<Event>>,
+        username: Arc<str>,
         handle: &mut RaylibHandle,
         thread: &RaylibThread,
-    ) {
+    ) -> Result<(), Box<dyn Error>> {
+        let id = UserId::new();
+        let mut istate = BoardState {
+            objects: HashMap::new(),
+            background_image: Arc::from("nyancat.png"),
+            people: HashMap::new(),
+            images: HashMap::new(),
+        };
+        if let Some(con) = con.as_ref() {
+            con.send(&Event {
+                source: id.clone(),
+                data: EventData::UserConnected {
+                    name: username.clone(),
+                },
+            })
+            .await?;
+            let data = con.receive().await?;
+            match data.data {
+                EventData::EntireState { state } => {
+                    istate = state;
+                }
+                _ => {
+                    return Err("failed".into());
+                }
+            }
+        };
         let mut slf = Self {
             con,
             gui_state: ClientGuiState {
+                user_name: "bridget".into(),
                 should_enumerate: true,
-                id: UserId::new(),
-                state: BoardState {
-                    objects: HashMap::new(),
-                    background_image: Arc::from("nyancat.png"),
-                    people: HashMap::new(),
-                    images: HashMap::new(),
-                },
+                id,
+                state: istate,
                 should_continue: true,
                 messages: Vec::new(),
                 image_scroll: ScrollBoxData::new(),
+                message_scroll: ScrollBoxData::new(),
+                message_input: TextBoxData::new(),
+                uname_input: TextBoxData::new(),
                 client_mode: ClientMode::SelectMode {
                     selected_object: ObjectId::new_invalid(),
                 },
                 next_object_name: String::new(),
+                user_scroll: ScrollBoxData::new(),
             },
             name_input: TextBoxData::new(),
         };
+
         slf.load_image(handle, thread, "orc.png");
         slf.load_image(handle, thread, "nyancat.png");
-        slf.run(handle, thread).await
+        slf.run(handle, thread).await?;
+        Ok(())
     }
 
     pub fn load_image(&mut self, handle: &mut RaylibHandle, thread: &RaylibThread, name: &str) {
@@ -904,5 +1064,273 @@ impl ClientState {
         drop(draw);
         g.texture = Some(Arc::new(Mutex::new(img)));
         self.gui_state.state.images.insert(name.into(), g);
+    }
+}
+
+pub struct WelcomeState {
+    pub last_error_message: String,
+    pub should_exit: bool,
+    pub should_join: bool,
+    pub should_host: bool,
+    pub should_host_local: bool,
+    pub user_name: String,
+    pub user_name_data: TextBoxData,
+    pub to_join: String,
+    pub to_join_data: TextBoxData,
+}
+
+pub async fn game_loop(handle: &mut RaylibHandle, thread: &RaylibThread) {
+    let mut state = WelcomeState {
+        last_error_message: String::new(),
+        should_exit: false,
+        should_host: false,
+        should_join: false,
+        should_host_local: false,
+        user_name: String::new(),
+        user_name_data: TextBoxData::new(),
+        to_join: String::new(),
+        to_join_data: TextBoxData::new(),
+    };
+    while !state.should_exit {
+        let mut gui = GUI::new(&state, handle, thread);
+        gui.centered_horizontal(|gui| {
+            state.should_exit = false;
+            state.should_host = false;
+            state.should_join = false;
+            state.should_host_local = false;
+            gui.container(300, |gui| {
+                if !state.last_error_message.is_empty() {
+                    gui.p1(format!("Error:{}", state.last_error_message));
+                    gui.button("dismiss", 12, |state| {
+                        state.last_error_message.clear();
+                    });
+                }
+                gui.p1(format!("User Name:{}", state.user_name));
+                gui.p1("Edit User Name");
+                gui.text_input(&state.user_name_data, 16, 32);
+            });
+            gui.container(900, |gui| {
+                gui.h1("WELCOME TO BORED GAMES!");
+                gui.h4("Press any key to continue");
+                gui.h1(" ");
+                gui.button_1("host", |state| {
+                    state.should_host = true;
+                });
+                gui.button_1("connect", |state| {
+                    state.should_join = true;
+                });
+                gui.button_1("run locally", |state| {
+                    state.should_host_local = true;
+                });
+                gui.button_1("exit", |state| {
+                    state.should_exit = true;
+                });
+                gui.h1(" ");
+            });
+            gui.container(400, |gui| {
+                let adr = address().0;
+                gui.p1(format!("local address:{}", adr));
+                gui.p1(format!("current address to connect to:{}", state.to_join));
+                gui.p1("Edit Target Address");
+                gui.text_input(&state.to_join_data, 16, 32);
+                gui.button("set target to local", 16, move |state| {
+                    state.to_join = adr.clone();
+                });
+            });
+        });
+        gui.render(&mut state);
+        if handle.window_should_close() {
+            break;
+        }
+        if let Some(to_join) = state.to_join_data.output() {
+            state.to_join = to_join;
+        }
+        if let Some(uname) = state.user_name_data.output() {
+            state.user_name = uname;
+        }
+        if state.should_host {
+            if let Err(e) = game_host(handle, &thread, &state).await {
+                state.last_error_message = e.to_string();
+                println!("{:#?}", e);
+            }
+        } else if state.should_join {
+            if let Err(e) = game_join(handle, thread, &state).await {
+                state.last_error_message = e.to_string();
+                println!("{:#?}", e);
+            }
+        } else if state.should_host_local {
+            if let Err(e) =
+                ClientState::create_and_run(None, state.user_name.clone().into(), handle, thread)
+                    .await
+            {
+                state.last_error_message = e.to_string();
+            }
+        }
+    }
+}
+
+pub const PORT: u16 = 4242;
+pub static SERVER_SETUP: AtomicBool = AtomicBool::new(false);
+pub static SERVER_ERRORED: AtomicBool = AtomicBool::new(false);
+pub static SERVER_SHOULD_CLOSE: AtomicBool = AtomicBool::new(false);
+pub async fn game_host(
+    handle: &mut RaylibHandle,
+    thread: &RaylibThread,
+    state: &WelcomeState,
+) -> Result<(), Box<dyn Error>> {
+    SERVER_ERRORED.store(false, std::sync::atomic::Ordering::SeqCst);
+    let (st1, st2) = BPipe::create();
+    let bst1 = BStream::from_pipe(st1);
+    let bst2 = BStream::from_pipe(st2);
+    tokio::task::spawn(run_server(bst1));
+    while !SERVER_SETUP.load(std::sync::atomic::Ordering::SeqCst) {
+        if SERVER_ERRORED.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err("server errored".into());
+        }
+        tokio::task::yield_now().await;
+    }
+    ClientState::create_and_run(Some(bst2), state.user_name.clone().into(), handle, thread).await?;
+    SERVER_SHOULD_CLOSE.store(true, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
+}
+
+pub async fn game_join(
+    handle: &mut RaylibHandle,
+    thread: &RaylibThread,
+    state: &WelcomeState,
+) -> Result<(), Box<dyn Error>> {
+    println!("connecting to:{}", state.to_join);
+    let strm = TcpStream::connect((state.to_join.clone(), PORT)).await?;
+    ClientState::create_and_run(
+        Some(BStream::from_stream(Stream::new(strm))),
+        state.user_name.clone().into(),
+        handle,
+        thread,
+    )
+    .await?;
+    Ok(())
+}
+
+pub async fn run_server(bst: BStream<Event>) {
+    if let Err(e) = server_loop(bst).await {
+        println!("errored:{:#?}", e.to_string());
+        SERVER_ERRORED.store(true, std::sync::atomic::Ordering::SeqCst);
+    };
+}
+pub fn address() -> (String, u16) {
+    (local_ip::get().unwrap().to_string(), PORT)
+    //("127.0.0.1".to_string(), PORT)
+}
+
+pub async fn server_loop(host: BStream<Event>) -> Result<(), Box<dyn Error>> {
+    let listener = TcpListener::bind(address()).await?;
+    let (connections, con) = BPipe::create();
+    let (done, done0) = BPipe::create();
+    let handle = tokio::task::spawn(socket_loop(listener, con, done0));
+    let mut game_state = BoardState {
+        objects: HashMap::new(),
+        background_image: Arc::from("nyancat.png"),
+        people: HashMap::new(),
+        images: HashMap::new(),
+    };
+    let mut thost = Some(host);
+    let mut people: HashMap<UserId, BStream<Event>> = HashMap::new();
+    while !SERVER_SHOULD_CLOSE.load(std::sync::atomic::Ordering::SeqCst) {
+        let mut events: Vec<Event> = Vec::new();
+        if let Some(bst) = thost.take() {
+            let Ok(tmp) = bst.receive().await else {
+                continue;
+            };
+            let id = tmp.source.clone();
+            let _ = bst
+                .send(&Event {
+                    source: UserId::new_invalid(),
+                    data: EventData::EntireState {
+                        state: game_state.clone(),
+                    },
+                })
+                .await;
+            events.push(tmp);
+            people.insert(id, bst);
+        }
+        while let Some(i) = connections.try_receive() {
+            let bst: Stream<Event> = Stream::new(i);
+            let Ok(tmp) = bst.receive().await else {
+                continue;
+            };
+            let id = tmp.source.clone();
+            let _ = bst
+                .send(&Event {
+                    source: UserId::new_invalid(),
+                    data: EventData::EntireState {
+                        state: game_state.clone(),
+                    },
+                })
+                .await;
+            events.push(tmp);
+            people.insert(id, BStream::from_stream(bst));
+        }
+        for (_, j) in &people {
+            while let Some(n) = j.try_receive().await? {
+                events.push(n);
+            }
+        }
+        for i in events {
+            match &i.data {
+                EventData::UserDisconnected => {
+                    people.remove(&i.source);
+                }
+                EventData::RequestEntireState => {
+                    if let Some(x) = people.get(&i.source) {
+                        let _ = x
+                            .send(&Event {
+                                source: UserId::new_invalid(),
+                                data: EventData::EntireState {
+                                    state: game_state.clone(),
+                                },
+                            })
+                            .await;
+                    }
+                    continue;
+                }
+                EventData::EntireState { state } => {
+                    game_state = state.clone();
+                    continue;
+                }
+                _ => {}
+            }
+            for (id, st) in &people {
+                if i.source != *id {
+                    let _ = st.send(&i).await;
+                }
+            }
+        }
+    }
+    println!("done");
+    done.send(());
+    handle.await?;
+    Ok(())
+}
+
+pub async fn socket_loop(listener: TcpListener, stream: BPipe<TcpStream>, done: BPipe<()>) {
+    while !SERVER_SHOULD_CLOSE.load(std::sync::atomic::Ordering::SeqCst) {
+        let acc = listener.accept();
+        SERVER_SETUP.store(true, std::sync::atomic::Ordering::SeqCst);
+        let dne = done.receive();
+        let output;
+        tokio::select! {
+            val = acc => {
+                output = val;
+            }
+            _ = dne => {
+                break;
+            }
+        };
+        if let Ok(x) = output {
+            println!("sent");
+            stream.send(x.0);
+        } else {
+            println!("failed");
+        }
     }
 }
