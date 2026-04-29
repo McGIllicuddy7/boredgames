@@ -28,7 +28,7 @@ impl<T: DeserializeOwned + Serialize> Stream<T> {
     }
 
     pub async fn send(&self, value: &T) -> Result<usize, tokio::io::Error> {
-        let v = serde_json::to_vec(value).unwrap();
+        let v = rmp_serde::to_vec(value).unwrap();
         let count = v.len();
         let mut guard = self.stream.lock().await;
         if let Err(e) = guard.write_u64_le(count as u64).await {
@@ -90,7 +90,7 @@ impl<T: DeserializeOwned + Serialize> Stream<T> {
                 return Err(y);
             }
         };
-        let value = serde_json::from_slice(&buffer);
+        let value = rmp_serde::from_slice(&buffer);
         match value {
             Ok(t) => Ok(t),
             Err(_) => Err(tokio::io::Error::new(
@@ -143,7 +143,12 @@ impl<T: DeserializeOwned + Serialize> Stream<T> {
                             }
                         },
                     };
-                    let out = serde_json::from_slice(&v)?;
+                    let Ok(out) = rmp_serde::from_slice(&v) else {
+                        return Err(tokio::io::Error::new(
+                            tokio::io::ErrorKind::InvalidData,
+                            "invalid rmp message".to_string(),
+                        ));
+                    };
                     Ok(Some(out))
                 } else {
                     Ok(None)
