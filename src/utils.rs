@@ -1,5 +1,6 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
+    hash::Hash,
     marker::PhantomData,
     sync::{Arc, atomic::AtomicBool},
     task::Waker,
@@ -733,7 +734,6 @@ impl Default for Timer {
 
 impl Timer {
     pub fn since(&self) -> Duration {
-        
         self.start.elapsed()
     }
     pub fn new() -> Self {
@@ -942,5 +942,198 @@ impl<T> SharedList<T> {
 impl<T: Clone> SharedList<T> {
     pub fn get(&self, at: usize) -> Option<T> {
         self.lock().get(at).cloned()
+    }
+}
+#[derive(Serialize, Deserialize)]
+pub struct Table<Key: Eq + Hash, Value> {
+    table: std::sync::Mutex<HashMap<Key, Value>>,
+}
+
+impl<
+    Key: Eq + Hash + DeserializeOwned + Serialize + Clone,
+    Value: Serialize + DeserializeOwned + Clone,
+> Table<Key, Value>
+{
+    pub fn new() -> Self {
+        Self {
+            table: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+    pub fn take_lock<'a>(&'a self) -> std::sync::MutexGuard<'a, HashMap<Key, Value>> {
+        match self.table.lock() {
+            Ok(x) => x,
+            Err(x) => x.into_inner(),
+        }
+    }
+
+    pub fn get(&self, key: &Key) -> Option<Value> {
+        self.take_lock().get(key).map(|i| i.clone())
+    }
+
+    pub fn set(&self, key: Key, value: Value) {
+        self.take_lock().insert(key, value);
+    }
+
+    pub fn select(&self, mut predicate: impl FnMut(&Key, &Value) -> bool) -> Vec<(Key, Value)> {
+        let guard = self.take_lock();
+        let mut out = Vec::new();
+        for i in guard.iter() {
+            if predicate(i.0, i.1) {
+                out.push((i.0.clone(), i.1.clone()));
+            }
+        }
+        out
+    }
+
+    pub fn select_by_keys(&self, mut predicate: impl FnMut(&Key) -> bool) -> Vec<(Key, Value)> {
+        let guard = self.take_lock();
+        let mut out = Vec::new();
+        for i in guard.iter() {
+            if predicate(i.0) {
+                out.push((i.0.clone(), i.1.clone()));
+            }
+        }
+        out
+    }
+
+    pub fn select_by_values(&self, mut predicate: impl FnMut(&Key) -> bool) -> Vec<(Key, Value)> {
+        let guard = self.take_lock();
+        let mut out = Vec::new();
+        for i in guard.iter() {
+            if predicate(i.0) {
+                out.push((i.0.clone(), i.1.clone()));
+            }
+        }
+        out
+    }
+    pub fn get_keys_matching(&self, mut predicate: impl FnMut(&Key, &Value) -> bool) -> Vec<Key> {
+        let guard = self.take_lock();
+        let mut out = Vec::new();
+        for i in guard.iter() {
+            if predicate(i.0, i.1) {
+                out.push(i.0.clone());
+            }
+        }
+        out
+    }
+
+    pub fn get_keys_by_matching_keys(&self, mut predicate: impl FnMut(&Key) -> bool) -> Vec<Key> {
+        let guard = self.take_lock();
+        let mut out = Vec::new();
+        for i in guard.iter() {
+            if predicate(i.0) {
+                out.push(i.0.clone());
+            }
+        }
+        out
+    }
+
+    pub fn get_keys_by_matching_values(&self, mut predicate: impl FnMut(&Key) -> bool) -> Vec<Key> {
+        let guard = self.take_lock();
+        let mut out = Vec::new();
+        for i in guard.iter() {
+            if predicate(i.0) {
+                out.push(i.0.clone());
+            }
+        }
+        out
+    }
+
+    pub fn store(&self, values: Vec<(Key, Value)>) {
+        let mut guard = self.take_lock();
+        for i in values {
+            guard.insert(i.0, i.1);
+        }
+    }
+
+    pub fn transform_matching(
+        &self,
+        mut predicate: impl FnMut(&Key, &Value) -> bool,
+        mut transform: impl FnMut(&Key, &mut Value),
+    ) {
+        let mut guard = self.take_lock();
+        for (key, value) in guard.iter_mut() {
+            if predicate(key, value) {
+                transform(key, value)
+            }
+        }
+    }
+    pub fn transform_matching_by_key(
+        &self,
+        mut predicate: impl FnMut(&Key) -> bool,
+        mut transform: impl FnMut(&Key, &mut Value),
+    ) {
+        let mut guard = self.take_lock();
+        for (key, value) in guard.iter_mut() {
+            if predicate(key) {
+                transform(key, value)
+            }
+        }
+    }
+
+    pub fn transform_matching_by_value(
+        &self,
+        mut predicate: impl FnMut(&Value) -> bool,
+        mut transform: impl FnMut(&Key, &mut Value),
+    ) {
+        let mut guard = self.take_lock();
+        for (key, value) in guard.iter_mut() {
+            if predicate(value) {
+                transform(key, value)
+            }
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct PriorityQueue<T: PartialEq> {
+    inner: VecDeque<T>,
+}
+impl<T: PartialEq> PriorityQueue<T> {
+    pub fn new() -> Self {
+        Self {
+            inner: VecDeque::new(),
+        }
+    }
+
+    pub fn next_value(&mut self) -> Option<T> {
+        self.inner.pop_back()
+    }
+
+    pub fn next_value_rev(&mut self) -> Option<T> {
+        self.inner.pop_front()
+    }
+    pub fn insert(&mut self, value: T) {
+        let mut idx = 0;
+        while idx < self.inner.len() {
+            if self.inner[idx] == value {
+                self.inner.remove(idx);
+            } else {
+                idx += 1;
+            }
+        }
+        self.inner.push_front(value);
+    }
+
+    pub fn send_to_back(&mut self, value: T) {
+        let mut idx = 0;
+        while idx < self.inner.len() {
+            if self.inner[idx] == value {
+                self.inner.remove(idx);
+            } else {
+                idx += 1;
+            }
+        }
+        self.inner.push_back(value);
+    }
+    pub fn remove(&mut self, value: &T) {
+        let mut idx = 0;
+        while idx < self.inner.len() {
+            if self.inner[idx] == *value {
+                self.inner.remove(idx);
+            } else {
+                idx += 1;
+            }
+        }
     }
 }

@@ -1059,6 +1059,10 @@ pub enum Widget<State> {
         text_height: i32,
         style: Style,
     },
+    Rectangle {
+        bounds: Bounds,
+        color: Color,
+    },
 }
 impl<State> Widget<State> {
     pub fn bounds(&self) -> Bounds {
@@ -1112,6 +1116,7 @@ impl<State> Widget<State> {
                 text_height: _,
                 style: _,
             } => *bounds,
+            Widget::Rectangle { bounds, color: _ } => *bounds,
         }
     }
     pub fn shift(&mut self, old_pos: Point, new_pos: Point) {
@@ -1191,6 +1196,10 @@ impl<State> Widget<State> {
                 style: _,
                 data: _,
             } => {
+                bounds.x += dx;
+                bounds.y += dy;
+            }
+            Widget::Rectangle { bounds, color: _ } => {
                 bounds.x += dx;
                 bounds.y += dy;
             }
@@ -1305,6 +1314,12 @@ impl<State> Widget<State> {
                 bounds.height = (bounds.height as f32 * ry) as i32;
                 bounds.width = (bounds.width as f32 * rx) as i32;
                 *text_height = (*text_height as f32 * ry) as i32;
+            }
+            Widget::Rectangle { bounds, color: _ } => {
+                bounds.x = (bounds.x as f32 * rx) as i32;
+                bounds.y = (bounds.y as f32 * ry) as i32;
+                bounds.height = (bounds.height as f32 * ry) as i32;
+                bounds.width = (bounds.width as f32 * rx) as i32;
             }
         }
     }
@@ -1594,6 +1609,9 @@ impl<State> Widget<State> {
                         text.push(c);
                     }
                 }
+            }
+            Widget::Rectangle { bounds, color } => {
+                cmd.draw_rectangle(bounds.x, bounds.y, bounds.width, bounds.height, *color);
             }
         }
     }
@@ -2070,6 +2088,25 @@ impl<'a, State> HorizontalContainerBuilder<'a, State> {
             split,
         });
     }
+
+    pub fn rectangle(&mut self, width: i32, height: i32, color: Color) {
+        let x0 = self.bounds.x + self.bounds.width + self.padding;
+        let y0 = self.bounds.y + self.padding;
+        let tmp = height + self.padding * 2;
+        if tmp > self.bounds.height {
+            self.bounds.height = tmp;
+        }
+        self.bounds.width += width + self.padding * 2;
+        self.children.push(Widget::Rectangle {
+            bounds: Bounds {
+                x: x0,
+                y: y0,
+                width,
+                height,
+            },
+            color,
+        })
+    }
 }
 
 impl<'a, State> ContainerBuilder<'a, State> {
@@ -2433,6 +2470,20 @@ impl<'a, State> ContainerBuilder<'a, State> {
         self.children.push(w);
         self.bounds.height += height + self.padding * 2;
     }
+
+    pub fn rectangle(&mut self, height: i32, color: Color) {
+        let w = Widget::Rectangle {
+            bounds: Bounds {
+                x: self.bounds.x + self.padding,
+                y: self.bounds.y + self.bounds.height + self.padding,
+                width: self.bounds.width - self.padding * 2,
+                height,
+            },
+            color,
+        };
+        self.children.push(w);
+        self.bounds.height += height + self.padding * 2;
+    }
 }
 
 impl<'a, State> ScrollBoxContainerBuilder<'a, State> {
@@ -2776,6 +2827,7 @@ impl<'a, State> ScrollBoxContainerBuilder<'a, State> {
     pub fn button_4(&mut self, text: impl AsRef<str>, on_click: impl FnMut(&mut State) + 'static) {
         self.button(text.as_ref(), self.style.paragraph_height - 12, on_click);
     }
+
     pub fn canvas(
         &mut self,
         height: i32,
@@ -2798,6 +2850,20 @@ impl<'a, State> ScrollBoxContainerBuilder<'a, State> {
             scale_y: 1.0,
             style: self.style,
             to_run: Arc::new(Mutex::new(Box::new(to_render))),
+        };
+        self.children.push(w);
+        self.displacement += height + self.padding * 2;
+    }
+
+    pub fn rectangle(&mut self, height: i32, color: Color) {
+        let w = Widget::Rectangle {
+            bounds: Bounds {
+                x: self.bounds.width + self.bounds.x + self.padding,
+                y: self.displacement + self.padding,
+                width: self.bounds.width - self.padding * 2,
+                height,
+            },
+            color,
         };
         self.children.push(w);
         self.displacement += height + self.padding * 2;
@@ -3176,7 +3242,22 @@ impl<'a, State> ReversedScrollBoxContainerBuilder<'a, State> {
         self.children.push(w);
         self.displacement += height + self.padding * 2;
     }
+
+    pub fn rectangle(&mut self, height: i32, color: Color) {
+        let w = Widget::Rectangle {
+            bounds: Bounds {
+                x: self.bounds.width + self.bounds.x + self.padding,
+                y: self.displacement + self.padding,
+                width: self.bounds.width - self.padding * 2,
+                height,
+            },
+            color,
+        };
+        self.children.push(w);
+        self.displacement += height + self.padding * 2;
+    }
 }
+
 pub fn split_text(
     text: &str,
     handle: &RaylibHandle,

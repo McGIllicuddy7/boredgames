@@ -3,6 +3,7 @@ use std::{
     collections::HashMap,
     error::Error,
     sync::{Arc, Mutex, atomic::AtomicBool},
+    time::Duration,
 };
 
 use raylib::{
@@ -19,7 +20,7 @@ use tokio::{
 
 use crate::{
     gui::{Bounds, GUI, Point, ScrollBoxData, TextBoxData},
-    utils::{BPipe, BStream, ObjectId, SharedList, Stream, generate_id},
+    utils::{BPipe, BStream, ObjectId, PriorityQueue, SharedList, Stream, generate_id},
 };
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -46,6 +47,7 @@ pub struct BoardState {
     pub people: HashMap<UserId, Arc<str>>,
     pub images: HashMap<Arc<str>, TImage>,
     pub messages: Vec<Message>,
+    pub render_list: PriorityQueue<ObjectId>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -124,6 +126,7 @@ impl UserId {
         }
     }
 }
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Event {
     pub source: UserId,
@@ -166,6 +169,9 @@ pub enum EventData {
         width: i32,
         height: i32,
     },
+    SendToBack {
+        id: ObjectId,
+    },
 }
 
 pub struct ClientState {
@@ -197,6 +203,9 @@ pub struct ClientGuiState {
     pub drawing_color_entry: TextBoxData,
     pub drawing_color: Col,
     pub brush_size: i32,
+    pub object_size: i32,
+    pub should_resync: bool,
+    pub tick: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -272,17 +281,24 @@ impl ClientState {
         handle: &mut RaylibHandle,
         thread: &RaylibThread,
     ) -> Result<(), Box<dyn Error>> {
+        self.gui_state.should_resync = false;
+        self.gui_state.tick = self.gui_state.tick.wrapping_add(1);
         let mut ns = self.gui_state.clone();
         let mut gui = GUI::new(&ns, handle, thread);
         let update_stack: SharedList<ObjectId> = SharedList::new();
         let created_stack: SharedList<ObjectId> = SharedList::new();
         let load_queue: SharedList<String> = SharedList::new();
+        let send_to_back_stack: SharedList<ObjectId> = SharedList::new();
         let load_queue_act = load_queue.clone();
         let created_stack_act = created_stack.clone();
         let update_stack_act = update_stack.clone();
+        let send_to_back_stack_act = send_to_back_stack.clone();
         gui.centered_horizontal(|gui| {
             gui.container(300, |gui| {
                 gui.p4(format!("connected to:{}", self.gui_state.connection));
+                gui.button_4("resync", |state| {
+                    state.should_resync = true;
+                });
                 gui.p1(format!("username:{}", ns.user_name));
                 gui.p2("change user name");
                 gui.text_input(&ns.uname_input, 16, 32);
@@ -312,7 +328,25 @@ impl ClientState {
                 } else {
                     gui.button("enumerate", 16, |ns| ns.should_enumerate = true);
                 }
-                gui.p2("Connected Users");
+                gui.p1(format!("object size:{}", ns.object_size));
+                gui.button_2("increase object size", |state| {
+                    state.object_size += 1;
+                    if state.object_size < 1 {
+                        state.object_size = 1;
+                    }
+                    if state.object_size > 10 {
+                        state.object_size = 10;
+                    }
+                });
+                gui.button_2("decrease object size", |state| {
+                    state.object_size -= 1;
+                    if state.object_size < 1 {
+                        state.object_size = 1;
+                    }
+                    if state.object_size > 10 {
+                        state.object_size = 10;
+                    }
+                });
                 gui.button_1("scale up", |state| {
                     state.dim_scale += 5;
                     if state.dim_scale > 100 {
@@ -376,7 +410,8 @@ impl ClientState {
                 gui.text_input(&ns.background_image_name_entry, 16, 32);
                 gui.p1("background image dimensions( in the form of \"width, height\")");
                 gui.text_input(&ns.background_image_dimensions_entry, 16, 32);
-                gui.scroll_box(300, &ns.user_scroll, |gui| {
+                gui.p2("Connected Users");
+                gui.scroll_box(200, &ns.user_scroll, |gui| {
                     for i in &ns.state.people {
                         gui.p2(i.1);
                     }
@@ -440,7 +475,12 @@ impl ClientState {
                     }
                     | ClientMode::PlacingTokens { selected_image: _ } => ObjectId::new_invalid(),
                 };
-                for (id, obj) in &mut state.state.objects {
+                let mut list = state.state.render_list.clone();
+                while let Some(id) = list.next_value() {
+                    let Some(obj) = state.state.objects.get_mut(&id) else {
+                        continue;
+                    };
+                    let id = &id;
                     if *id == selected {
                         continue;
                     }
@@ -450,15 +490,15 @@ impl ClientState {
                                 let img = img.texture.as_ref().unwrap();
                                 cmds.draw_render_texture_scaled(
                                     img,
-                                    (obj.bounds.x + base_x) * dim + dim / 2,
-                                    (obj.bounds.y + base_y) * dim + dim / 2,
+                                    (obj.bounds.x + base_x) * dim + ((obj.bounds.width) * dim / 2),
+                                    (obj.bounds.y + base_y) * dim + ((obj.bounds.height) * dim / 2),
                                     obj.bounds.width * dim,
                                     obj.bounds.height * dim,
                                 );
                             } else {
                                 cmds.draw_rectangle(
-                                    (obj.bounds.x + base_x) * dim + dim / 2,
-                                    (obj.bounds.y + base_y) * dim + dim / 2,
+                                    (obj.bounds.x + base_x) * dim + ((obj.bounds.width) * dim / 2),
+                                    (obj.bounds.y + base_y) * dim + ((obj.bounds.height) * dim / 2),
                                     obj.bounds.width * dim,
                                     obj.bounds.height * dim,
                                     Color::RED,
@@ -681,7 +721,11 @@ impl ClientState {
                         } else {
                             if mouse_pressed {
                                 let mut new_selected = ObjectId::new_invalid();
-                                for (id, i) in &state.state.objects {
+                                let mut list = state.state.render_list.clone();
+                                while let Some(id) = list.next_value_rev() {
+                                    let Some(i) = state.state.objects.get_mut(&id) else {
+                                        continue;
+                                    };
                                     let bounds_act = Bounds {
                                         x: (i.bounds.x + base_x) * dim,
                                         y: (i.bounds.y + base_y) * dim,
@@ -699,7 +743,11 @@ impl ClientState {
                                 || handle.is_key_pressed(raylib::ffi::KeyboardKey::KEY_BACKSPACE)
                             {
                                 let mut deleted = Vec::new();
-                                for (id, i) in &state.state.objects {
+                                let mut list = state.state.render_list.clone();
+                                while let Some(id) = list.next_value_rev() {
+                                    let Some(i) = state.state.objects.get_mut(&id) else {
+                                        continue;
+                                    };
                                     let bounds_act = Bounds {
                                         x: (i.bounds.x + base_x) * dim,
                                         y: (i.bounds.y + base_y) * dim,
@@ -714,6 +762,24 @@ impl ClientState {
                                 for i in deleted {
                                     state.state.objects.remove(&i);
                                     update_stack.push_back(i);
+                                }
+                            }
+                            if handle.is_key_pressed(raylib::ffi::KeyboardKey::KEY_B) {
+                                let mut list = state.state.render_list.clone();
+                                while let Some(id) = list.next_value_rev() {
+                                    let Some(i) = state.state.objects.get_mut(&id) else {
+                                        continue;
+                                    };
+                                    let bounds_act = Bounds {
+                                        x: (i.bounds.x + base_x) * dim,
+                                        y: (i.bounds.y + base_y) * dim,
+                                        width: i.bounds.width * dim,
+                                        height: i.bounds.height * dim,
+                                    };
+                                    if bounds_act.contains_point(mouse_pos) {
+                                        send_to_back_stack.push_back(id);
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -745,8 +811,8 @@ impl ClientState {
                                     bounds: Bounds {
                                         x: p0_x,
                                         y: p0_y,
-                                        width: 1,
-                                        height: 1,
+                                        width: state.object_size,
+                                        height: state.object_size,
                                     },
                                     data: ObjectData::Token {
                                         token_image_name: selected_image.clone(),
@@ -898,7 +964,7 @@ impl ClientState {
                             object: id,
                         };
                     }
-                    if handle.is_key_down(raylib::ffi::KeyboardKey::KEY_S) && mouse_pressed {
+                    if handle.is_key_down(raylib::ffi::KeyboardKey::KEY_F) && mouse_pressed {
                         let mut point_adjusted = mouse_pos;
                         let mut point_adjusted = mouse_pos;
                         point_adjusted.x *= 25;
@@ -932,6 +998,67 @@ impl ClientState {
                             object: id,
                         }
                     }
+                    if handle.is_key_down(raylib::ffi::KeyboardKey::KEY_W) && (state.tick % 12 == 0)
+                    {
+                        state.base_y -= 1;
+                        if state.base_y > 100 {
+                            state.base_y = 100;
+                        }
+                        if state.base_y < -100 {
+                            state.base_y = -100;
+                        }
+                    }
+                    if handle.is_key_down(raylib::ffi::KeyboardKey::KEY_S) && (state.tick % 12 == 0)
+                    {
+                        state.base_y += 1;
+                        if state.base_y > 100 {
+                            state.base_y = 100;
+                        }
+                        if state.base_y < -100 {
+                            state.base_y = -100;
+                        }
+                    }
+                    if handle.is_key_down(raylib::ffi::KeyboardKey::KEY_A) && (state.tick % 12 == 0)
+                    {
+                        state.base_x -= 1;
+                        if state.base_x > 100 {
+                            state.base_x = 100;
+                        }
+                        if state.base_x < -100 {
+                            state.base_x = -100;
+                        }
+                    }
+                    if handle.is_key_down(raylib::ffi::KeyboardKey::KEY_D) && (state.tick % 12 == 0)
+                    {
+                        state.base_x += 1;
+                        if state.base_x > 100 {
+                            state.base_x = 100;
+                        }
+                        if state.base_x < -100 {
+                            state.base_x = -100;
+                        }
+                    }
+                    if handle.is_key_down(raylib::ffi::KeyboardKey::KEY_LEFT_SHIFT)
+                        && (state.tick % 45 == 0)
+                    {
+                        state.dim_scale -= 5;
+                        if state.dim_scale > 100 {
+                            state.dim_scale = 100;
+                        }
+                        if state.dim_scale < 5 {
+                            state.dim_scale = 5;
+                        }
+                    }
+                    if handle.is_key_down(raylib::ffi::KeyboardKey::KEY_V) && (state.tick % 45 == 0)
+                    {
+                        state.dim_scale += 5;
+                        if state.dim_scale > 100 {
+                            state.dim_scale = 100;
+                        }
+                        if state.dim_scale < 5 {
+                            state.dim_scale = 5;
+                        }
+                    }
                 }
                 if handle.is_file_dropped() {
                     let tmp = handle.load_dropped_files();
@@ -956,15 +1083,25 @@ impl ClientState {
                 }
             });
             gui.container(250, |gui| {
-                gui.p1(format!("{:#?}", ns.client_mode.name()));
-                gui.p1(format!(
+                gui.h1(" ");
+                gui.p3(format!("{:#?}", ns.client_mode.name()));
+                gui.p3(format!(
                     "drawing color: (r:{}, g:{}, b:{}, a:{})",
                     ns.drawing_color.r, ns.drawing_color.g, ns.drawing_color.b, ns.drawing_color.a
                 ));
-                gui.p1("enter drawing color(format \"r, g, b, a\"");
+                gui.rectangle(
+                    32,
+                    Color {
+                        r: ns.drawing_color.r,
+                        g: ns.drawing_color.g,
+                        b: ns.drawing_color.b,
+                        a: ns.drawing_color.a,
+                    },
+                );
+                gui.p3("enter drawing color(format \"r, g, b, a\"");
                 gui.text_input(&ns.drawing_color_entry, 16, 32);
                 gui.p2(format!("brush size:{}", ns.brush_size));
-                gui.button_2("increase brush size", |state| {
+                gui.button_3("increase brush size", |state| {
                     state.brush_size += 2;
                     if state.brush_size > 50 {
                         state.brush_size = 50;
@@ -973,7 +1110,7 @@ impl ClientState {
                         state.brush_size = 1;
                     }
                 });
-                gui.button_2("decrease brush size", |state| {
+                gui.button_3("decrease brush size", |state| {
                     state.brush_size -= 2;
                     if state.brush_size > 50 {
                         state.brush_size = 50;
@@ -990,7 +1127,7 @@ impl ClientState {
                 gui.scroll_box(600, &self.gui_state.image_scroll, |gui| {
                     for name in self.gui_state.state.images.keys() {
                         let n2 = name.clone();
-                        gui.button_1(name, move |state| {
+                        gui.button_3(name, move |state| {
                             state.client_mode = ClientMode::PlacingTokens {
                                 selected_image: n2.clone(),
                             };
@@ -1018,12 +1155,14 @@ impl ClientState {
         }
         while let Some(x) = created_stack_act.pop_front() {
             let Some(v) = self.gui_state.state.objects.get(&x) else {
+                self.gui_state.state.render_list.remove(&x);
                 events.push(Event {
                     source: self.gui_state.id.clone(),
                     data: EventData::ObjectDestroyed { id: x },
                 });
                 continue;
             };
+            self.gui_state.state.render_list.insert(x.clone());
             events.push(Event {
                 source: self.gui_state.id.clone(),
                 data: EventData::ObjectCreated {
@@ -1035,12 +1174,14 @@ impl ClientState {
         }
         while let Some(x) = update_stack_act.pop_front() {
             let Some(v) = self.gui_state.state.objects.get(&x) else {
+                self.gui_state.state.render_list.remove(&x);
                 events.push(Event {
                     source: self.gui_state.id.clone(),
                     data: EventData::ObjectDestroyed { id: x },
                 });
                 continue;
             };
+            self.gui_state.state.render_list.insert(x.clone());
             events.push(Event {
                 source: self.gui_state.id.clone(),
                 data: EventData::ObjectUpdated {
@@ -1049,6 +1190,21 @@ impl ClientState {
                 },
             });
             continue;
+        }
+        while let Some(x) = send_to_back_stack_act.pop_front() {
+            let Some(_) = self.gui_state.state.objects.get(&x) else {
+                self.gui_state.state.render_list.remove(&x);
+                events.push(Event {
+                    source: self.gui_state.id.clone(),
+                    data: EventData::ObjectDestroyed { id: x },
+                });
+                continue;
+            };
+            self.gui_state.state.render_list.send_to_back(x.clone());
+            events.push(Event {
+                source: self.gui_state.id.clone(),
+                data: EventData::SendToBack { id: x },
+            });
         }
         if let Some(x) = self.gui_state.message_input.output() {
             let msg = Message {
@@ -1135,18 +1291,33 @@ impl ClientState {
         }
         while let Some(y) = load_queue_act.pop_front() {
             if self.load_image(handle, thread, &y).is_ok() {
-                let Some(tmp) = self.gui_state.state.images.get(&*y.clone()) else {
+                let name_act = {
+                    let tmp = y.split("/");
+                    let last = tmp.last();
+                    if let Some(x) = last {
+                        x.to_string()
+                    } else {
+                        y.to_string()
+                    }
+                };
+                let Some(tmp) = self.gui_state.state.images.get(&*name_act.clone()) else {
                     continue;
                 };
                 let ev = Event {
                     source: self.gui_state.id.clone(),
                     data: EventData::UploadImage {
-                        name: y.clone().into(),
+                        name: name_act.clone().into(),
                         data: tmp.clone(),
                     },
                 };
                 events.push(ev);
             }
+        }
+        if self.gui_state.should_resync {
+            events.push(Event {
+                source: self.gui_state.id.clone(),
+                data: EventData::RequestEntireState,
+            });
         }
         self.handle_network(events, handle, thread).await?;
         yield_now().await;
@@ -1173,6 +1344,9 @@ impl ClientState {
                 None => "INVALID USER".into(),
             };
             match i.data {
+                EventData::SendToBack { id } => {
+                    self.gui_state.state.render_list.send_to_back(id);
+                }
                 EventData::EntireState { state } => {
                     self.gui_state.state = state;
                     for i in self.gui_state.state.images.keys() {
@@ -1196,12 +1370,15 @@ impl ClientState {
                     self.gui_state.state.people.remove(&i.source);
                 }
                 EventData::ObjectCreated { id, value } => {
+                    self.gui_state.state.render_list.insert(id.clone());
                     self.gui_state.state.objects.insert(id, value);
                 }
                 EventData::ObjectDestroyed { id } => {
+                    self.gui_state.state.render_list.remove(&id);
                     self.gui_state.state.objects.remove(&id);
                 }
                 EventData::ObjectUpdated { id, value } => {
+                    self.gui_state.state.render_list.insert(id.clone());
                     self.gui_state.state.objects.insert(id, value);
                 }
                 EventData::KickRequest { to_kick } => {
@@ -1285,6 +1462,7 @@ impl ClientState {
     ) -> Result<(), Box<dyn Error>> {
         let id = UserId::new();
         let mut istate = BoardState {
+            render_list: PriorityQueue::new(),
             background_image_height: 1000,
             background_image_width: 1000,
             objects: HashMap::new(),
@@ -1314,6 +1492,9 @@ impl ClientState {
         let mut slf = Self {
             con,
             gui_state: ClientGuiState {
+                tick: 0,
+                should_resync: false,
+                object_size: 1,
                 brush_size: 5,
                 base_x: 0,
                 base_y: 0,
@@ -1345,7 +1526,6 @@ impl ClientState {
             },
             name_input: TextBoxData::new(),
         };
-
         slf.load_image(handle, thread, "orc.png")?;
         slf.load_image(handle, thread, "nyancat.png")?;
         slf.run(handle, thread).await?;
@@ -1536,7 +1716,7 @@ pub async fn game_loop(handle: &mut RaylibHandle, thread: &RaylibThread) {
     }
 }
 
-pub const PORT: u16 = 6942;
+pub const PORT: u16 = 3240;
 pub static SERVER_SETUP: AtomicBool = AtomicBool::new(false);
 pub static SERVER_ERRORED: AtomicBool = AtomicBool::new(false);
 pub static SERVER_SHOULD_CLOSE: AtomicBool = AtomicBool::new(false);
@@ -1595,7 +1775,7 @@ pub async fn run_server(bst: BStream<Event>) {
 
 pub fn address() -> (String, u16) {
     (local_ip::get().unwrap().to_string(), PORT)
-    //("127.0.0.1".to_string(), PORT)
+    //  ("127.0.0.1".to_string(), PORT)
 }
 
 pub async fn server_loop(host: Option<BStream<Event>>) -> Result<(), Box<dyn Error>> {
@@ -1604,6 +1784,7 @@ pub async fn server_loop(host: Option<BStream<Event>>) -> Result<(), Box<dyn Err
     let (done, done0) = BPipe::create();
     let handle = tokio::task::spawn(socket_loop(listener, con, done0));
     let mut game_state = BoardState {
+        render_list: PriorityQueue::new(),
         background_image_height: 1000,
         background_image_width: 1000,
         messages: Vec::new(),
@@ -1643,6 +1824,9 @@ pub async fn server_loop(host: Option<BStream<Event>>) -> Result<(), Box<dyn Err
         }
         for i in events {
             match &i.data {
+                EventData::SendToBack { id } => {
+                    game_state.render_list.send_to_back(id.clone());
+                }
                 EventData::Message { contents } => {
                     let nm = if let Some(name) = game_state.people.get(&i.source) {
                         name.clone()
@@ -1679,12 +1863,15 @@ pub async fn server_loop(host: Option<BStream<Event>>) -> Result<(), Box<dyn Err
                     people.remove(&i.source);
                 }
                 EventData::ObjectCreated { id, value } => {
+                    game_state.render_list.insert(id.clone());
                     game_state.objects.insert(id.clone(), value.clone());
                 }
                 EventData::ObjectDestroyed { id } => {
+                    game_state.render_list.remove(id);
                     game_state.objects.remove(id);
                 }
                 EventData::ObjectUpdated { id, value } => {
+                    game_state.render_list.insert(id.clone());
                     game_state.objects.insert(id.clone(), value.clone());
                 }
                 EventData::KickRequest { to_kick } => {
@@ -1730,20 +1917,13 @@ pub async fn socket_loop(listener: TcpListener, stream: BPipe<TcpStream>, done: 
     while !SERVER_SHOULD_CLOSE.load(std::sync::atomic::Ordering::SeqCst) {
         let acc = listener.accept();
         SERVER_SETUP.store(true, std::sync::atomic::Ordering::SeqCst);
-        let dne = done.receive();
-        let output;
-        tokio::select! {
-            val = acc => {
-                output = val;
-            }
-            _ = dne => {
-                break;
-            }
-        };
-        if let Ok(x) = output {
+        let output = tokio::time::timeout(Duration::from_millis(16), acc).await;
+        if let Ok(Ok(x)) = output {
             stream.send(x.0);
-        } else {
-            println!("failed somehow");
+        }
+        if let Some(_) = done.try_receive() {
+            break;
         }
     }
+    SERVER_SETUP.store(false, std::sync::atomic::Ordering::SeqCst);
 }
