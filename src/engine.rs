@@ -2,6 +2,7 @@ use core::{slice, str};
 use std::{
     collections::HashMap,
     error::Error,
+    net::IpAddr,
     sync::{Arc, Mutex, atomic::AtomicBool},
     time::Duration,
 };
@@ -20,7 +21,9 @@ use tokio::{
 
 use crate::{
     gui::{Bounds, GUI, Point, ScrollBoxData, TextBoxData},
-    utils::{BPipe, BStream, ObjectId, PriorityQueue, SharedList, Stream, generate_id},
+    utils::{
+        BPipe, BStream, Config, ObjectId, PriorityQueue, SharedList, Stream, Table, generate_id,
+    },
 };
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -40,6 +43,8 @@ impl PartialEq for TImage {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct BoardState {
+    pub owner_name: Arc<str>,
+    pub name: Arc<str>,
     pub objects: HashMap<ObjectId, Object>,
     pub background_image: Arc<str>,
     pub background_image_width: i32,
@@ -206,6 +211,7 @@ pub struct ClientGuiState {
     pub object_size: i32,
     pub should_resync: bool,
     pub tick: u32,
+    pub levels: HashMap<Arc<str>, BoardState>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -281,6 +287,9 @@ impl ClientState {
         handle: &mut RaylibHandle,
         thread: &RaylibThread,
     ) -> Result<(), Box<dyn Error>> {
+        for (_, i) in self.gui_state.state.images.iter_mut() {
+            let _ = i.ensure_renderable(handle, thread);
+        }
         self.gui_state.should_resync = false;
         self.gui_state.tick = self.gui_state.tick.wrapping_add(1);
         let mut ns = self.gui_state.clone();
@@ -1321,6 +1330,9 @@ impl ClientState {
         }
         self.handle_network(events, handle, thread).await?;
         yield_now().await;
+        if self.gui_state.tick % 600 == 0 {
+            update_config(self);
+        }
         Ok(())
     }
 
@@ -1455,6 +1467,7 @@ impl ClientState {
 
     pub async fn create_and_run(
         con: Option<BStream<Event>>,
+        name: Arc<str>,
         connection: String,
         username: Arc<str>,
         handle: &mut RaylibHandle,
@@ -1462,6 +1475,8 @@ impl ClientState {
     ) -> Result<(), Box<dyn Error>> {
         let id = UserId::new();
         let mut istate = BoardState {
+            owner_name: username.clone(),
+            name,
             render_list: PriorityQueue::new(),
             background_image_height: 1000,
             background_image_width: 1000,
@@ -1492,6 +1507,7 @@ impl ClientState {
         let mut slf = Self {
             con,
             gui_state: ClientGuiState {
+                levels: config_get_levels(),
                 tick: 0,
                 should_resync: false,
                 object_size: 1,
@@ -1529,6 +1545,8 @@ impl ClientState {
         slf.load_image(handle, thread, "orc.png")?;
         slf.load_image(handle, thread, "nyancat.png")?;
         slf.run(handle, thread).await?;
+        update_config(&slf);
+        println!("{}", config_get_images().len());
         Ok(())
     }
 
@@ -1689,6 +1707,7 @@ pub async fn game_loop(handle: &mut RaylibHandle, thread: &RaylibThread) {
                     println!("{:#?}", e);
                 }
             }
+            CONFIG.save();
         } else if state.should_join {
             if state.user_name.is_empty() {
                 state.last_error_message = "Error Must have a non empty username".into();
@@ -1698,17 +1717,21 @@ pub async fn game_loop(handle: &mut RaylibHandle, thread: &RaylibThread) {
                     println!("{:#?}", e);
                 }
             }
-        } else if state.should_host_local
-            && let Err(e) = ClientState::create_and_run(
+            CONFIG.save();
+        } else if state.should_host_local {
+            if let Err(e) = ClientState::create_and_run(
                 None,
+                "test".into(),
                 "local".to_string(),
                 state.user_name.clone().into(),
                 handle,
                 thread,
             )
             .await
-        {
-            state.last_error_message = e.to_string();
+            {
+                state.last_error_message = e.to_string();
+            }
+            CONFIG.save();
         }
         if handle.window_should_close() {
             break;
@@ -1729,7 +1752,7 @@ pub async fn game_host(
     let (st1, st2) = BPipe::create();
     let bst1 = BStream::from_pipe(st1);
     let bst2 = BStream::from_pipe(st2);
-    tokio::task::spawn(run_server(bst1));
+    tokio::task::spawn(run_server(bst1, state.user_name.clone().into()));
     while !SERVER_SETUP.load(std::sync::atomic::Ordering::SeqCst) {
         if SERVER_ERRORED.load(std::sync::atomic::Ordering::SeqCst) {
             return Err("server errored".into());
@@ -1738,6 +1761,7 @@ pub async fn game_host(
     }
     ClientState::create_and_run(
         Some(bst2),
+        "test".into(),
         address().0.to_string(),
         state.user_name.clone().into(),
         handle,
@@ -1757,6 +1781,7 @@ pub async fn game_join(
     let strm = TcpStream::connect((state.to_join.clone(), PORT)).await?;
     ClientState::create_and_run(
         Some(BStream::from_stream(Stream::new(strm))),
+        "test".into(),
         state.to_join.clone(),
         state.user_name.clone().into(),
         handle,
@@ -1766,8 +1791,8 @@ pub async fn game_join(
     Ok(())
 }
 
-pub async fn run_server(bst: BStream<Event>) {
-    if let Err(e) = server_loop(Some(bst)).await {
+pub async fn run_server(bst: BStream<Event>, owner_name: Arc<str>) {
+    if let Err(e) = server_loop(Some(bst), owner_name).await {
         println!("errored:{:#?}", e.to_string());
         SERVER_ERRORED.store(true, std::sync::atomic::Ordering::SeqCst);
     };
@@ -1778,12 +1803,17 @@ pub fn address() -> (String, u16) {
     //  ("127.0.0.1".to_string(), PORT)
 }
 
-pub async fn server_loop(host: Option<BStream<Event>>) -> Result<(), Box<dyn Error>> {
+pub async fn server_loop(
+    host: Option<BStream<Event>>,
+    owner_name: Arc<str>,
+) -> Result<(), Box<dyn Error>> {
     let listener = TcpListener::bind(address()).await?;
     let (connections, con) = BPipe::create();
     let (done, done0) = BPipe::create();
     let handle = tokio::task::spawn(socket_loop(listener, con, done0));
     let mut game_state = BoardState {
+        owner_name,
+        name: "test".into(),
         render_list: PriorityQueue::new(),
         background_image_height: 1000,
         background_image_width: 1000,
@@ -1926,4 +1956,181 @@ pub async fn socket_loop(listener: TcpListener, stream: BPipe<TcpStream>, done: 
         }
     }
     SERVER_SETUP.store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[derive(Serialize, Deserialize, Default)]
+pub struct UserConfig {
+    pub user_name: Arc<str>,
+    pub recent_connections: Vec<(Arc<str>, IpAddr)>,
+    #[serde(skip)]
+    pub levels: Table<Arc<str>, BoardState>,
+    #[serde(skip)]
+    pub images: Table<Arc<str>, TImage>,
+}
+
+pub static CONFIG: Config<UserConfig> = Config::new(
+    "./board_games_config",
+    "config.txt",
+    &config_setup,
+    &config_save,
+    &["images", "maps"],
+);
+
+pub fn config_setup(directory_name: &'static str, file_name: &'static str, info: &mut UserConfig) {
+    _ = file_name;
+    info.images = Table::load_from_folder(
+        directory_name,
+        ".png",
+        Some(&mut |v: Arc<str>| {
+            let mut v2 = raylib::prelude::Image::load_image(&v).unwrap();
+            let tmp = TImage::from_image(&mut v2);
+            Ok(tmp)
+        }),
+    )
+    .unwrap();
+    info.levels = Table::load_from_folder(directory_name, ".board", None).unwrap();
+}
+
+pub fn config_save(directory_name: &'static str, file_name: &'static str, info: &mut UserConfig) {
+    _ = file_name;
+    info.images
+        .store_to_folder(
+            &(directory_name.to_string() + "/images"),
+            "",
+            Some(&mut |v: Arc<str>, img: &TImage| {
+                let mut v2 = Image::gen_image_color(img.width, img.height, Color::BLANK);
+                for y in 0..img.height {
+                    for x in 0..img.width {
+                        let c = img.values[(img.width * y + x) as usize];
+                        v2.draw_pixel(
+                            x,
+                            y,
+                            Color {
+                                r: c.r,
+                                g: c.g,
+                                b: c.b,
+                                a: c.a,
+                            },
+                        );
+                    }
+                }
+                let n2 = if let Some(v) = v.strip_suffix(".png") {
+                    v.to_string() + ".png"
+                } else {
+                    v.to_string() + ".png"
+                };
+                println!("name:{}", &n2);
+                v2.export_image(&n2);
+                Ok(())
+            }),
+        )
+        .unwrap();
+    info.levels
+        .store_to_folder(&(directory_name.to_string() + "/maps/"), ".board", None)
+        .unwrap();
+}
+
+impl TImage {
+    pub fn from_image(img: &mut Image) -> Self {
+        let mut tmp = vec![
+            Col {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 255
+            };
+            (img.height() * img.width()) as usize
+        ]
+        .into_boxed_slice();
+        for y in 0..img.height() {
+            for x in 0..img.width() {
+                let t2 = img.get_color(x, y);
+                tmp[(y * img.width() + x) as usize] = Col {
+                    r: t2.r,
+                    g: t2.g,
+                    b: t2.b,
+                    a: t2.a,
+                };
+            }
+        }
+        let g = TImage {
+            width: img.width(),
+            height: img.height(),
+            values: tmp,
+            texture: None,
+        };
+        g
+    }
+
+    pub fn ensure_renderable(
+        &mut self,
+        handle: &mut RaylibHandle,
+        thread: &RaylibThread,
+    ) -> Result<(), raylib::error::Error> {
+        if self.texture.is_some() {
+            return Ok(());
+        }
+        let mut img = handle.load_render_texture(thread, self.width as u32, self.height as u32)?;
+        let mut draw = handle.begin_texture_mode(thread, &mut img);
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let tmp = self.values[(y * self.width + x) as usize];
+                draw.draw_pixel(
+                    x,
+                    y,
+                    Color {
+                        r: tmp.r,
+                        g: tmp.g,
+                        b: tmp.b,
+                        a: tmp.a,
+                    },
+                );
+            }
+        }
+        drop(draw);
+        self.texture = Some(Arc::new(Mutex::new(img)));
+        Ok(())
+    }
+}
+
+impl UserConfig {
+    pub fn update_info(&mut self, state: &ClientState) {
+        if let Some(x) = state.con.as_ref().map(|i| i.get_ip_address()).flatten() {
+            self.recent_connections
+                .push((state.gui_state.state.owner_name.clone(), x));
+        }
+        self.user_name = state.gui_state.user_name.clone();
+        for i in &state.gui_state.state.images {
+            println!("{:#?}", i.0);
+            let mut tmp = i.1.clone();
+            tmp.texture = None;
+            self.images.set(i.0.clone(), tmp);
+            println!("len:{}", self.images.take_lock().len());
+        }
+        let level_name = state.gui_state.state.name.clone();
+        let mut state = state.gui_state.state.clone();
+        state.images.clear();
+        state.people.clear();
+        self.levels.set(level_name, state);
+    }
+
+    pub fn update_user_name(&mut self, name: &str) {
+        self.user_name = name.into();
+    }
+}
+
+pub fn update_config(state: &ClientState) {
+    CONFIG.unadvised_get_mutable().update_info(state);
+}
+
+pub fn update_user_name_config(name: &str) {
+    CONFIG.unadvised_get_mutable().update_user_name(name);
+}
+
+pub fn config_get_images() -> HashMap<Arc<str>, TImage> {
+    CONFIG.get().images.take_lock().clone()
+}
+
+pub fn config_get_levels() -> HashMap<Arc<str>, BoardState> {
+    CONFIG.get().levels.take_lock().clone()
 }

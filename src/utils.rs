@@ -1,12 +1,17 @@
+use core::sync;
 use std::{
     collections::{HashMap, VecDeque},
     hash::Hash,
     marker::PhantomData,
+    net::IpAddr,
+    ops::{Deref, DerefMut},
+    str::FromStr,
     sync::{Arc, atomic::AtomicBool},
     task::Waker,
     time::Duration,
 };
 
+use crate::try_catch;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -442,8 +447,20 @@ impl<T: Serialize + DeserializeOwned + Clone> BStream<T> {
 
     pub fn has_errored_fatally(&self) -> bool {
         match &self.inner {
-            BStreamInner::Local(v) => v.has_other(),
+            BStreamInner::Local(v) => !v.has_other(),
             BStreamInner::Network(n) => n.has_errored_fatally(),
+        }
+    }
+
+    pub fn get_ip_address(&self) -> Option<IpAddr> {
+        match &self.inner {
+            BStreamInner::Network(stream) => {
+                if let Ok(a) = stream.stream.blocking_lock().peer_addr() {
+                    return Some(a.ip());
+                }
+                return None;
+            }
+            BStreamInner::Local(_) => None,
         }
     }
 }
@@ -949,6 +966,13 @@ pub struct Table<Key: Eq + Hash, Value> {
     table: std::sync::Mutex<HashMap<Key, Value>>,
 }
 
+impl<Key: Eq + Hash, Value> Default for Table<Key, Value> {
+    fn default() -> Self {
+        Self {
+            table: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+}
 impl<
     Key: Eq + Hash + DeserializeOwned + Serialize + Clone,
     Value: Serialize + DeserializeOwned + Clone,
@@ -1085,6 +1109,84 @@ impl<
     }
 }
 
+impl<Value: Serialize + DeserializeOwned + Clone> Table<Arc<str>, Value> {
+    pub fn load_from_folder(
+        path: &str,
+        extension: &str,
+        mut custom: Option<&mut dyn FnMut(Arc<str>) -> Result<Value, std::io::Error>>,
+    ) -> Result<Self, std::io::Error> {
+        let dir = std::fs::read_dir(path)?;
+        let out = Self::new();
+        for i in dir {
+            let tmp = i?;
+            if tmp.file_type()?.is_file() {
+                let pth = tmp.path();
+                let mut should_load = false;
+                let Some(name) = pth.file_name() else {
+                    continue;
+                };
+                let Some(name) = name.to_str() else {
+                    continue;
+                };
+                if let Some(ext) = pth.extension() {
+                    if let Some(ext) = ext.to_str() {
+                        if ext == extension {
+                            should_load = true;
+                        }
+                    }
+                } else {
+                    if extension.is_empty() {
+                        should_load = true;
+                    }
+                }
+                if should_load {
+                    let v = if let Some(func) = custom.as_mut() {
+                        func(name.into())?
+                    } else {
+                        let s = std::fs::read(&pth)?;
+                        let Ok(x) = rmp_serde::from_slice(&s) else {
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "could not deserialize",
+                            )
+                            .into());
+                        };
+                        x
+                    };
+                    let k = name.into();
+                    out.set(k, v);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn store_to_folder(
+        &self,
+        path: &str,
+        extension: &str,
+        mut custom: Option<&mut dyn FnMut(Arc<str>, &Value) -> Result<(), std::io::Error>>,
+    ) -> Result<(), std::io::Error> {
+        let g = self.take_lock();
+        for (key, value) in g.iter() {
+            let name = path.to_string() + "/" + &key.to_string() + extension;
+            if let Some(func) = custom.as_mut() {
+                func(name.clone().into(), value).unwrap();
+            } else {
+                let Ok(v) = rmp_serde::to_vec(value) else {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "could not serialize",
+                    )
+                    .into());
+                };
+                std::fs::write(name, v)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct PriorityQueue<T: PartialEq> {
     inner: VecDeque<T>,
@@ -1103,6 +1205,7 @@ impl<T: PartialEq> PriorityQueue<T> {
     pub fn next_value_rev(&mut self) -> Option<T> {
         self.inner.pop_front()
     }
+
     pub fn insert(&mut self, value: T) {
         let mut idx = 0;
         while idx < self.inner.len() {
@@ -1136,4 +1239,121 @@ impl<T: PartialEq> PriorityQueue<T> {
             }
         }
     }
+}
+
+pub struct Config<T: Serialize + DeserializeOwned + Default + 'static + Send + Sync> {
+    inner: std::sync::Mutex<Option<T>>,
+    create_func: &'static (dyn Fn(&'static str, &'static str, &mut T) + Send + Sync),
+    save_func: &'static (dyn Fn(&'static str, &'static str, &mut T) + Send + Sync),
+    file_name: &'static str,
+    directory: &'static str,
+    sub_folders: &'static [&'static str],
+}
+impl<T: Serialize + DeserializeOwned + Default + Send + Sync> Config<T> {
+    pub const fn new(
+        directory: &'static str,
+        file_name: &'static str,
+        create_func: &'static (dyn Fn(&'static str, &'static str, &mut T) + Send + Sync),
+        save_func: &'static (dyn Fn(&'static str, &'static str, &mut T) + Send + Sync),
+        sub_folders: &'static [&'static str],
+    ) -> Self {
+        Self {
+            sub_folders,
+            inner: std::sync::Mutex::new(None),
+            create_func,
+            save_func,
+            file_name,
+            directory,
+        }
+    }
+    pub fn unsafe_mutable_inner_get<'a>(&'a self) -> std::sync::MutexGuard<'a, Option<T>> {
+        let mut tmp = match self.inner.lock() {
+            Ok(x) => x,
+            Err(x) => x.into_inner(),
+        };
+        let mut errored = false;
+        if tmp.is_none() {
+            try_catch!(try {
+                let path_to = self.directory.to_string() + "/" + self.file_name;
+                let byte_buff = std::fs::read(&path_to)?;
+                let base: T = serde_json::from_slice(&byte_buff)?;
+                *tmp = Some(base);
+            } catch |_x| {
+                println!("caught");
+                errored = true;
+                if let Err(_) = std::fs::read_dir(self.directory){
+                    std::fs::create_dir(self.directory).unwrap();
+                    for i in self.sub_folders{
+                        std::fs::create_dir(self.directory.to_string()+"/"+i).unwrap();
+                    }
+                }
+                let value = T::default();
+                *tmp = Some(value);
+            });
+            (self.create_func)(self.directory, self.file_name, tmp.as_mut().unwrap());
+        }
+        if errored {
+            let value = tmp.as_mut().unwrap();
+            let path_to = self.directory.to_string() + "/" + self.file_name;
+            let v = serde_json::to_string(&value).unwrap();
+            std::fs::write(path_to, v).unwrap();
+            (self.save_func)(self.directory, self.file_name, value);
+        }
+        tmp
+    }
+
+    pub fn get(&'static self) -> ConfigGuard<T> {
+        ConfigGuard {
+            inner: self.unsafe_mutable_inner_get(),
+        }
+    }
+
+    pub fn unadvised_get_mutable(&'static self) -> ConfigGuardMut<T> {
+        ConfigGuardMut {
+            inner: self.unsafe_mutable_inner_get(),
+        }
+    }
+
+    pub fn save(&self) {
+        let mut tmp = self.unsafe_mutable_inner_get();
+        let value = tmp.as_mut().unwrap();
+        (self.save_func)(self.directory, self.file_name, value);
+        let path_to = self.directory.to_string() + "/" + self.file_name;
+        let v = serde_json::to_string(&value).unwrap();
+        std::fs::write(path_to, v).unwrap();
+    }
+}
+
+pub struct ConfigGuard<T: Serialize + DeserializeOwned + Default + 'static> {
+    inner: std::sync::MutexGuard<'static, Option<T>>,
+}
+impl<T: Serialize + DeserializeOwned + Default + 'static> Deref for ConfigGuard<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        self.inner.deref().as_ref().unwrap()
+    }
+}
+pub struct ConfigGuardMut<T: Serialize + DeserializeOwned + Default + 'static> {
+    inner: std::sync::MutexGuard<'static, Option<T>>,
+}
+impl<T: Serialize + DeserializeOwned + Default + 'static> Deref for ConfigGuardMut<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        self.inner.deref().as_ref().unwrap()
+    }
+}
+impl<T: Serialize + DeserializeOwned + Default + 'static> DerefMut for ConfigGuardMut<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.inner.deref_mut().as_mut().unwrap()
+    }
+}
+
+#[macro_export]
+macro_rules! try_catch {
+    (try $block:block catch |$value:ident| $catch:block) => {{
+        let mut _func = (|| {$block Result::<(), Box<dyn std::error::Error>>::Ok(())});
+        if let Err($value) = _func(){
+            $catch
+        }
+    }};
 }
