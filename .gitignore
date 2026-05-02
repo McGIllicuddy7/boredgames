@@ -7,7 +7,7 @@
 
 #/target
 assets/*.bored
-
+board_games_config/*
 # Added by cargo
 #
 # already existing elements were commented out

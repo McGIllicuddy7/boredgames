@@ -1,6 +1,6 @@
 use core::{slice, str};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     error::Error,
     net::IpAddr,
     sync::{Arc, Mutex, atomic::AtomicBool},
@@ -177,6 +177,9 @@ pub enum EventData {
     SendToBack {
         id: ObjectId,
     },
+    RenameLevel {
+        name: Arc<str>,
+    },
 }
 
 pub struct ClientState {
@@ -212,6 +215,9 @@ pub struct ClientGuiState {
     pub should_resync: bool,
     pub tick: u32,
     pub levels: HashMap<Arc<str>, BoardState>,
+    pub level_to_load: Option<Arc<str>>,
+    pub level_select_scroll_box_data: ScrollBoxData,
+    pub set_level_name_data: TextBoxData,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -290,6 +296,7 @@ impl ClientState {
         for (_, i) in self.gui_state.state.images.iter_mut() {
             let _ = i.ensure_renderable(handle, thread);
         }
+        self.gui_state.level_to_load = None;
         self.gui_state.should_resync = false;
         self.gui_state.tick = self.gui_state.tick.wrapping_add(1);
         let mut ns = self.gui_state.clone();
@@ -374,55 +381,26 @@ impl ClientState {
                         state.dim_scale = 5;
                     }
                 });
-                gui.button_1("move up", |state| {
-                    state.base_y -= 5;
-                    if state.base_y > 100 {
-                        state.base_y = 100;
-                    }
-                    if state.base_y < -100 {
-                        state.base_y = -100;
-                    }
-                });
-                gui.button_1("move down", |state| {
-                    state.base_y += 5;
-                    if state.base_y > 100 {
-                        state.base_y = 100;
-                    }
-                    if state.base_y < -100 {
-                        state.base_y = -100;
-                    }
-                });
-                gui.button_1("move left", |state| {
-                    state.base_x -= 5;
-                    if state.base_x > 100 {
-                        state.base_x = 100;
-                    }
-                    if state.base_x < -100 {
-                        state.base_x = -100;
-                    }
-                });
-                gui.button_1("move right", |state| {
-                    state.base_x += 5;
-                    if state.base_x > 100 {
-                        state.base_x = 100;
-                    }
-                    if state.base_x < -100 {
-                        state.base_x = -100;
-                    }
-                });
                 gui.button_1("recenter", |state| {
                     state.dim_scale = 25;
                     state.base_x = 0;
                     state.base_y = 0;
                 });
+                gui.p2(format!("level name:{}", ns.state.name));
+                gui.p4("edit level name");
+                gui.text_input(&ns.set_level_name_data, 16, 32);
                 gui.p1("background image name");
                 gui.text_input(&ns.background_image_name_entry, 16, 32);
                 gui.p1("background image dimensions( in the form of \"width, height\")");
                 gui.text_input(&ns.background_image_dimensions_entry, 16, 32);
-                gui.p2("Connected Users");
-                gui.scroll_box(200, &ns.user_scroll, |gui| {
-                    for i in &ns.state.people {
-                        gui.p2(i.1);
+                gui.p2("levels");
+                gui.scroll_box(150, &ns.level_select_scroll_box_data, |gui| {
+                    gui.p1("");
+                    for (i, _) in &ns.levels {
+                        let nm = i.clone();
+                        gui.button_1(i, move |state| {
+                            state.level_to_load = Some(nm.clone());
+                        });
                     }
                 });
             });
@@ -1154,6 +1132,12 @@ impl ClientState {
                     }
                 });
                 gui.text_input(&ns.message_input, 16, 40);
+                gui.p2("Connected Users");
+                gui.scroll_box(200, &ns.user_scroll, |gui| {
+                    for i in &ns.state.people {
+                        gui.p2(i.1);
+                    }
+                });
             });
         });
         gui.render(&mut ns);
@@ -1298,6 +1282,14 @@ impl ClientState {
                 };
             }
         }
+
+        if let Some(nm) = self.gui_state.set_level_name_data.output() {
+            self.gui_state.state.name = nm.clone().into();
+            events.push(Event {
+                source: self.gui_state.id.clone(),
+                data: EventData::RenameLevel { name: nm.into() },
+            });
+        }
         while let Some(y) = load_queue_act.pop_front() {
             if self.load_image(handle, thread, &y).is_ok() {
                 let name_act = {
@@ -1328,11 +1320,56 @@ impl ClientState {
                 data: EventData::RequestEntireState,
             });
         }
-        self.handle_network(events, handle, thread).await?;
-        yield_now().await;
+        if let Some(k) = self.gui_state.level_to_load.as_ref() {
+            if let Some(st) = self.gui_state.levels.get(k) {
+                let mut new_state = st.clone();
+                new_state.people = self.gui_state.state.people.clone();
+                new_state.images = self.gui_state.state.images.clone();
+                new_state.messages = self.gui_state.state.messages.clone();
+                self.gui_state.state = new_state.clone();
+                events.push(Event {
+                    source: self.gui_state.id.clone(),
+                    data: EventData::EntireState { state: new_state },
+                });
+            }
+        }
         if self.gui_state.tick % 600 == 0 {
             update_config(self);
+            if (std::fs::Metadata::modified(
+                &std::fs::metadata("./board_games_config/images").unwrap(),
+            )
+            .unwrap()
+            .elapsed()
+            .unwrap()
+                < std::time::Duration::from_secs(5))
+                || (std::fs::Metadata::modified(
+                    &std::fs::metadata("./board_games_config/maps").unwrap(),
+                )
+                .unwrap()
+                .elapsed()
+                .unwrap()
+                    < std::time::Duration::from_secs(5))
+            {
+                reload_config(self);
+                self.gui_state.levels = config_get_levels();
+                let t2 = config_get_images();
+                for i in &t2 {
+                    if !self.gui_state.state.images.contains_key(&*i.0) {
+                        events.push(Event {
+                            source: self.gui_state.id.clone(),
+                            data: EventData::UploadImage {
+                                name: i.0.clone(),
+                                data: i.1.clone(),
+                            },
+                        });
+                        self.gui_state.state.images.insert(i.0.clone(), i.1.clone());
+                    }
+                }
+            }
         }
+        self.handle_network(events, handle, thread).await?;
+        yield_now().await;
+
         Ok(())
     }
 
@@ -1360,7 +1397,9 @@ impl ClientState {
                     self.gui_state.state.render_list.send_to_back(id);
                 }
                 EventData::EntireState { state } => {
+                    println!("{}", state.images.len());
                     self.gui_state.state = state;
+
                     for i in self.gui_state.state.images.keys() {
                         new_images.push(i.clone());
                     }
@@ -1407,6 +1446,9 @@ impl ClientState {
                     self.gui_state.state.background_image_width = width;
                     self.gui_state.state.background_image_height = height;
                 }
+                EventData::RenameLevel { name } => {
+                    self.gui_state.state.name = name;
+                }
             }
         }
         for i in new_images {
@@ -1450,8 +1492,20 @@ impl ClientState {
         handle: &mut RaylibHandle,
         thread: &RaylibThread,
     ) -> Result<(), Box<dyn Error>> {
+        self.gui_state.levels = config_get_levels();
+        println!("levels count:{}", self.gui_state.levels.len());
         loop {
-            self.step(handle, thread).await?;
+            if let Err(e) = self.step(handle, thread).await {
+                if let Some(t) = self.con.as_ref() {
+                    let _ = t
+                        .send(&Event {
+                            source: self.gui_state.id.clone(),
+                            data: EventData::UserDisconnected,
+                        })
+                        .await;
+                }
+                return Err(e);
+            };
             if !self.gui_state.should_continue {
                 println!("should not continue");
                 break;
@@ -1460,6 +1514,14 @@ impl ClientState {
                 println!("window_should_close");
                 break;
             }
+        }
+        if let Some(t) = self.con.as_ref() {
+            let _ = t
+                .send(&Event {
+                    source: self.gui_state.id.clone(),
+                    data: EventData::UserDisconnected,
+                })
+                .await;
         }
         println!("done");
         Ok(())
@@ -1481,11 +1543,12 @@ impl ClientState {
             background_image_height: 1000,
             background_image_width: 1000,
             objects: HashMap::new(),
-            background_image: Arc::from("nyancat.png"),
+            background_image: Arc::from(""),
             people: HashMap::new(),
             messages: Vec::new(),
             images: HashMap::new(),
         };
+        let mut images = config_get_images();
         if let Some(con) = con.as_ref() {
             con.send(&Event {
                 source: id.clone(),
@@ -1503,10 +1566,22 @@ impl ClientState {
                     return Err("failed".into());
                 }
             }
+            for i in &images {
+                con.send(&Event {
+                    source: id.clone(),
+                    data: EventData::UploadImage {
+                        name: i.0.clone(),
+                        data: i.1.clone(),
+                    },
+                })
+                .await?;
+                istate.images.insert(i.0.clone(), i.1.clone());
+            }
         };
         let mut slf = Self {
             con,
             gui_state: ClientGuiState {
+                level_to_load: None,
                 levels: config_get_levels(),
                 tick: 0,
                 should_resync: false,
@@ -1539,11 +1614,11 @@ impl ClientState {
                     a: 255,
                 },
                 drawing_color_entry: TextBoxData::new(),
+                set_level_name_data: TextBoxData::new(),
+                level_select_scroll_box_data: ScrollBoxData::new(),
             },
             name_input: TextBoxData::new(),
         };
-        slf.load_image(handle, thread, "orc.png")?;
-        slf.load_image(handle, thread, "nyancat.png")?;
         slf.run(handle, thread).await?;
         update_config(&slf);
         println!("{}", config_get_images().len());
@@ -1617,6 +1692,16 @@ impl ClientState {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum JoinState {
+    Address(String),
+    Name { name: Arc<str>, list: Vec<IpAddr> },
+}
+impl Default for JoinState {
+    fn default() -> Self {
+        Self::Address(String::new())
+    }
+}
 pub struct WelcomeState {
     pub last_error_message: String,
     pub should_exit: bool,
@@ -1625,8 +1710,9 @@ pub struct WelcomeState {
     pub should_host_local: bool,
     pub user_name: String,
     pub user_name_data: TextBoxData,
-    pub to_join: String,
+    pub to_join: JoinState,
     pub to_join_data: TextBoxData,
+    pub recently_joined_box_data: ScrollBoxData,
 }
 
 pub async fn game_loop(handle: &mut RaylibHandle, thread: &RaylibThread) {
@@ -1638,9 +1724,11 @@ pub async fn game_loop(handle: &mut RaylibHandle, thread: &RaylibThread) {
         should_host_local: false,
         user_name: String::new(),
         user_name_data: TextBoxData::new(),
-        to_join: String::new(),
+        to_join: JoinState::Address(String::new()),
         to_join_data: TextBoxData::new(),
+        recently_joined_box_data: ScrollBoxData::new(),
     };
+    state.user_name = CONFIG.get().user_name.clone().to_string();
     while !state.should_exit {
         let mut gui = GUI::new(&state, handle, thread);
         gui.centered_horizontal(|gui| {
@@ -1679,12 +1767,32 @@ pub async fn game_loop(handle: &mut RaylibHandle, thread: &RaylibThread) {
             });
             gui.container(400, |gui| {
                 let adr = address().0;
-                gui.p1(format!("local address:{}", adr));
-                gui.p1(format!("current address to connect to:{}", state.to_join));
+                gui.p1(format!("local address"));
+                gui.p1(format!("{}", adr));
+                gui.p1(format!(
+                    "current address to connect to:{}",
+                    match &state.to_join {
+                        JoinState::Address(s) => s.as_str(),
+                        JoinState::Name { name, list: _ } => name,
+                    }
+                ));
                 gui.p1("Edit Target Address");
                 gui.text_input(&state.to_join_data, 16, 32);
                 gui.button("set target to local", 16, move |state| {
-                    state.to_join = adr.clone();
+                    state.to_join = JoinState::Address(adr.clone());
+                });
+                gui.h4("recents");
+                gui.scroll_box(300, &state.recently_joined_box_data, |gui| {
+                    for (i, j) in &CONFIG.get().recent_connections {
+                        let tmp = j.clone();
+                        let name = i.clone();
+                        gui.button_2(format!("join:{}", i), move |state| {
+                            state.to_join = JoinState::Name {
+                                name: name.clone(),
+                                list: tmp.clone(),
+                            };
+                        });
+                    }
                 });
             });
         });
@@ -1693,7 +1801,7 @@ pub async fn game_loop(handle: &mut RaylibHandle, thread: &RaylibThread) {
             break;
         }
         if let Some(to_join) = state.to_join_data.output() {
-            state.to_join = to_join;
+            state.to_join = JoinState::Address(to_join);
         }
         if let Some(uname) = state.user_name_data.output() {
             state.user_name = uname;
@@ -1739,7 +1847,7 @@ pub async fn game_loop(handle: &mut RaylibHandle, thread: &RaylibThread) {
     }
 }
 
-pub const PORT: u16 = 3240;
+pub const PORT: u16 = 5124;
 pub static SERVER_SETUP: AtomicBool = AtomicBool::new(false);
 pub static SERVER_ERRORED: AtomicBool = AtomicBool::new(false);
 pub static SERVER_SHOULD_CLOSE: AtomicBool = AtomicBool::new(false);
@@ -1749,6 +1857,7 @@ pub async fn game_host(
     state: &WelcomeState,
 ) -> Result<(), Box<dyn Error>> {
     SERVER_ERRORED.store(false, std::sync::atomic::Ordering::SeqCst);
+    SERVER_SHOULD_CLOSE.store(false, std::sync::atomic::Ordering::SeqCst);
     let (st1, st2) = BPipe::create();
     let bst1 = BStream::from_pipe(st1);
     let bst2 = BStream::from_pipe(st2);
@@ -1777,12 +1886,40 @@ pub async fn game_join(
     thread: &RaylibThread,
     state: &WelcomeState,
 ) -> Result<(), Box<dyn Error>> {
-    println!("connecting to:{}", state.to_join);
-    let strm = TcpStream::connect((state.to_join.clone(), PORT)).await?;
+    println!("connecting to:{:#?}", state.to_join);
+    let mut name = String::new();
+    let strm = match &state.to_join {
+        JoinState::Address(a) => {
+            name = a.clone();
+            TcpStream::connect((a.clone(), PORT)).await?
+        }
+        JoinState::Name { name: _, list } => {
+            let mut out_err =
+                std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "connnection refused");
+            let mut out = None;
+            for i in list {
+                match TcpStream::connect((i.clone(), PORT)).await {
+                    Ok(x) => {
+                        name = i.to_string();
+                        out = Some(x);
+                    }
+                    Err(e) => {
+                        out_err = e;
+                    }
+                }
+            }
+            match out {
+                Some(x) => x,
+                None => {
+                    return Err(out_err.into());
+                }
+            }
+        }
+    };
     ClientState::create_and_run(
         Some(BStream::from_stream(Stream::new(strm))),
         "test".into(),
-        state.to_join.clone(),
+        name,
         state.user_name.clone().into(),
         handle,
         thread,
@@ -1799,7 +1936,11 @@ pub async fn run_server(bst: BStream<Event>, owner_name: Arc<str>) {
 }
 
 pub fn address() -> (String, u16) {
-    (local_ip::get().unwrap().to_string(), PORT)
+    if let Ok(x) = local_ip_address::local_ip() {
+        (x.to_string(), PORT)
+    } else {
+        (local_ip_address::local_ip().unwrap().to_string(), PORT)
+    }
     //  ("127.0.0.1".to_string(), PORT)
 }
 
@@ -1811,6 +1952,7 @@ pub async fn server_loop(
     let (connections, con) = BPipe::create();
     let (done, done0) = BPipe::create();
     let handle = tokio::task::spawn(socket_loop(listener, con, done0));
+    tokio::task::yield_now().await;
     let mut game_state = BoardState {
         owner_name,
         name: "test".into(),
@@ -1819,7 +1961,7 @@ pub async fn server_loop(
         background_image_width: 1000,
         messages: Vec::new(),
         objects: HashMap::new(),
-        background_image: Arc::from("nyancat.png"),
+        background_image: Arc::from(""),
         people: HashMap::new(),
         images: HashMap::new(),
     };
@@ -1847,10 +1989,22 @@ pub async fn server_loop(
             new_connections.push(id.clone());
             people.insert(id, BStream::from_stream(bst));
         }
-        for j in people.values() {
+        let mut dced = Vec::new();
+        for (id, j) in people.iter() {
             while let Some(n) = j.try_receive().await? {
                 events.push(n);
             }
+            if j.has_errored_fatally() {
+                dced.push(id.clone());
+            };
+        }
+        for i in dced {
+            people.remove(&i);
+            game_state.people.remove(&i);
+            events.push(Event {
+                source: i,
+                data: EventData::UserDisconnected,
+            });
         }
         for i in events {
             match &i.data {
@@ -1915,6 +2069,9 @@ pub async fn server_loop(
                     game_state.background_image_height = *height;
                     game_state.background_image_width = *width;
                 }
+                EventData::RenameLevel { name } => {
+                    game_state.name = name.clone();
+                }
             }
             for (id, st) in &people {
                 if i.source != *id {
@@ -1961,7 +2118,7 @@ pub async fn socket_loop(listener: TcpListener, stream: BPipe<TcpStream>, done: 
 #[derive(Serialize, Deserialize, Default)]
 pub struct UserConfig {
     pub user_name: Arc<str>,
-    pub recent_connections: Vec<(Arc<str>, IpAddr)>,
+    pub recent_connections: BTreeMap<Arc<str>, Vec<IpAddr>>,
     #[serde(skip)]
     pub levels: Table<Arc<str>, BoardState>,
     #[serde(skip)]
@@ -1979,16 +2136,18 @@ pub static CONFIG: Config<UserConfig> = Config::new(
 pub fn config_setup(directory_name: &'static str, file_name: &'static str, info: &mut UserConfig) {
     _ = file_name;
     info.images = Table::load_from_folder(
-        directory_name,
+        &(directory_name.to_string() + "/images"),
         ".png",
         Some(&mut |v: Arc<str>| {
+            println!("path:{}", v);
             let mut v2 = raylib::prelude::Image::load_image(&v).unwrap();
             let tmp = TImage::from_image(&mut v2);
             Ok(tmp)
         }),
     )
     .unwrap();
-    info.levels = Table::load_from_folder(directory_name, ".board", None).unwrap();
+    info.levels =
+        Table::load_from_folder(&(directory_name.to_string() + "/maps/"), ".board", None).unwrap();
 }
 
 pub fn config_save(directory_name: &'static str, file_name: &'static str, info: &mut UserConfig) {
@@ -2019,7 +2178,6 @@ pub fn config_save(directory_name: &'static str, file_name: &'static str, info: 
                 } else {
                     v.to_string() + ".png"
                 };
-                println!("name:{}", &n2);
                 v2.export_image(&n2);
                 Ok(())
             }),
@@ -2096,8 +2254,15 @@ impl TImage {
 impl UserConfig {
     pub fn update_info(&mut self, state: &ClientState) {
         if let Some(x) = state.con.as_ref().map(|i| i.get_ip_address()).flatten() {
-            self.recent_connections
-                .push((state.gui_state.state.owner_name.clone(), x));
+            if let Some(v) = self
+                .recent_connections
+                .get_mut(&state.gui_state.state.owner_name)
+            {
+                v.push(x)
+            } else {
+                self.recent_connections
+                    .insert(state.gui_state.state.owner_name.clone(), vec![x]);
+            }
         }
         self.user_name = state.gui_state.user_name.clone();
         for i in &state.gui_state.state.images {
@@ -2133,4 +2298,11 @@ pub fn config_get_images() -> HashMap<Arc<str>, TImage> {
 
 pub fn config_get_levels() -> HashMap<Arc<str>, BoardState> {
     CONFIG.get().levels.take_lock().clone()
+}
+
+pub fn reload_config(state: &ClientState) {
+    update_config(state);
+    CONFIG.save();
+    let mut cfg = CONFIG.unsafe_mutable_inner_get();
+    *cfg = None;
 }

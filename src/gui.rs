@@ -1014,6 +1014,7 @@ pub enum Widget<State> {
     Text {
         style: Style,
         bounds: Bounds,
+        verbatim_contents: Arc<str>,
         contents: Vec<Arc<str>>,
         text_height: i32,
     },
@@ -1082,6 +1083,7 @@ impl<State> Widget<State> {
             } => *bounds,
             Widget::Text {
                 style: _,
+                verbatim_contents: _,
                 bounds,
                 contents: _,
                 text_height: _,
@@ -1146,6 +1148,7 @@ impl<State> Widget<State> {
             }
             Widget::Text {
                 bounds,
+                verbatim_contents: _,
                 contents: _,
                 text_height: _,
                 style: _,
@@ -1244,6 +1247,7 @@ impl<State> Widget<State> {
             Widget::Text {
                 bounds,
                 contents: _,
+                verbatim_contents: _,
                 text_height,
                 style: _,
             } => {
@@ -1407,14 +1411,29 @@ impl<State> Widget<State> {
             Widget::Text {
                 bounds,
                 contents,
+                verbatim_contents,
                 style,
+
                 text_height,
             } => {
+                let pos = handle.get_mouse_position();
+                let mouse_released =
+                    handle.is_mouse_button_released(raylib::ffi::MouseButton::MOUSE_BUTTON_RIGHT);
                 let base_x = bounds.x;
                 let mut base_y = bounds.y;
                 for i in contents {
                     cmd.draw_text(i.clone(), base_x, base_y, *text_height, style.text_color);
                     base_y += *text_height;
+                }
+                if bounds.contains_point(Point {
+                    x: pos.x as i32,
+                    y: pos.y as i32,
+                }) && (mouse_released
+                    || ((handle.is_key_down(raylib::ffi::KeyboardKey::KEY_LEFT_CONTROL)
+                        || handle.is_key_down(raylib::ffi::KeyboardKey::KEY_LEFT_SUPER))
+                        && handle.is_key_down(raylib::ffi::KeyboardKey::KEY_C)))
+                {
+                    let _ = handle.set_clipboard_text(verbatim_contents);
                 }
             }
             Widget::Image {
@@ -1608,6 +1627,16 @@ impl<State> Widget<State> {
                     if let Some(c) = handle.get_char_pressed() {
                         text.push(c);
                     }
+                    if (handle.is_key_down(raylib::ffi::KeyboardKey::KEY_LEFT_CONTROL)
+                        || handle.is_key_down(raylib::ffi::KeyboardKey::KEY_LEFT_SUPER))
+                        && handle.is_key_pressed(raylib::ffi::KeyboardKey::KEY_V)
+                    {
+                        if let Ok(x) = handle.get_clipboard_text() {
+                            for i in x.chars() {
+                                text.push(i);
+                            }
+                        }
+                    }
                 }
             }
             Widget::Rectangle { bounds, color } => {
@@ -1722,7 +1751,9 @@ impl<'a, State> HorizontalContainerBuilder<'a, State> {
         }
         self.bounds.width += width + self.padding * 2;
         self.children.push(Widget::Text {
+            verbatim_contents: text.into(),
             style: self.style,
+
             text_height,
             bounds: Bounds {
                 x: x0,
@@ -1783,6 +1814,7 @@ impl<'a, State> HorizontalContainerBuilder<'a, State> {
         let b = Widget::Button {
             style: self.style,
             child: Box::new(Widget::Text {
+                verbatim_contents: text.into(),
                 text_height,
                 style: self.style,
                 bounds: Bounds {
@@ -2145,6 +2177,7 @@ impl<'a, State> ContainerBuilder<'a, State> {
         let height = split.len() as i32 * text_height;
         self.bounds.height += height + self.padding;
         self.children.push(Widget::Text {
+            verbatim_contents: text.into(),
             style: self.style,
             text_height,
             bounds: Bounds {
@@ -2192,6 +2225,7 @@ impl<'a, State> ContainerBuilder<'a, State> {
         let b = Widget::Button {
             style: self.style,
             child: Box::new(Widget::Text {
+                verbatim_contents: text.into(),
                 style: self.style,
                 text_height,
                 bounds: Bounds {
@@ -2518,11 +2552,12 @@ impl<'a, State> ScrollBoxContainerBuilder<'a, State> {
     pub fn text(&mut self, text: &str, text_height: i32) {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
-        let y0 = self.displacement + self.padding;
+        let y0 = self.bounds.y + self.displacement + self.padding;
         let split = split_text(text, self.handle, w, text_height);
         let height = split.len() as i32 * text_height;
         self.displacement += height + self.padding;
         self.children.push(Widget::Text {
+            verbatim_contents: text.into(),
             style: self.style,
             text_height,
             bounds: Bounds {
@@ -2538,7 +2573,7 @@ impl<'a, State> ScrollBoxContainerBuilder<'a, State> {
     pub fn text_input(&mut self, data: &TextBoxData, text_height: i32, height: i32) {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
-        let y0 = self.displacement + self.padding;
+        let y0 = self.bounds.y + self.displacement + self.padding;
         let split = split_text(&data.text.borrow(), self.handle, w, text_height);
         self.displacement += height + self.padding;
         self.children.push(Widget::TextInput {
@@ -2563,13 +2598,14 @@ impl<'a, State> ScrollBoxContainerBuilder<'a, State> {
     ) {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
-        let y0 = self.displacement + self.padding;
+        let y0 = self.bounds.y + self.displacement + self.padding;
         let split = split_text(text, self.handle, w - self.padding * 2, text_height);
         let height = split.len() as i32 * text_height + self.padding * 2;
         self.displacement += height;
         let b = Widget::Button {
             style: self.style,
             child: Box::new(Widget::Text {
+                verbatim_contents: text.into(),
                 style: self.style,
                 text_height,
                 bounds: Bounds {
@@ -2598,7 +2634,7 @@ impl<'a, State> ScrollBoxContainerBuilder<'a, State> {
     ) {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
-        let y0 = self.displacement + self.padding;
+        let y0 = self.bounds.y + self.displacement + self.padding;
         let ratio = image.width() as f32 / image.height() as f32;
         let height = ((w - self.padding * 2) as f32 * ratio) as i32;
         self.displacement += height + self.padding * 2;
@@ -2631,7 +2667,7 @@ impl<'a, State> ScrollBoxContainerBuilder<'a, State> {
             handle: self.handle,
             bounds: Bounds {
                 x: self.bounds.x + self.padding,
-                y: self.displacement + self.padding,
+                y: self.bounds.y + self.displacement + self.padding,
                 width: self.bounds.width - self.padding * 2,
                 height: 0,
             },
@@ -2654,7 +2690,7 @@ impl<'a, State> ScrollBoxContainerBuilder<'a, State> {
             handle: self.handle,
             bounds: Bounds {
                 x: self.bounds.x + self.padding,
-                y: self.displacement + self.padding,
+                y: self.bounds.y + self.displacement + self.padding,
                 width: self.bounds.width - self.padding * 2,
                 height,
             },
@@ -2677,7 +2713,7 @@ impl<'a, State> ScrollBoxContainerBuilder<'a, State> {
             handle: self.handle,
             bounds: Bounds {
                 x: self.bounds.x + self.padding,
-                y: self.displacement + self.padding,
+                y: self.bounds.y + self.displacement + self.padding,
                 width: self.bounds.width - self.padding * 2,
                 height,
             },
@@ -2699,7 +2735,7 @@ impl<'a, State> ScrollBoxContainerBuilder<'a, State> {
             handle: self.handle,
             bounds: Bounds {
                 x: self.bounds.x + self.padding,
-                y: self.displacement + self.padding,
+                y: self.bounds.y + self.displacement + self.padding,
                 width: self.bounds.width - self.padding * 2,
                 height: 0,
             },
@@ -2714,7 +2750,7 @@ impl<'a, State> ScrollBoxContainerBuilder<'a, State> {
     pub fn image(&mut self, image: Arc<Texture2D>) {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
-        let y0 = self.displacement + self.padding;
+        let y0 = self.bounds.y + self.displacement + self.padding;
         let ratio = image.width() as f32 / image.height() as f32;
         let height = ((w) as f32 * ratio) as i32;
         self.displacement += height + self.padding;
@@ -2734,7 +2770,7 @@ impl<'a, State> ScrollBoxContainerBuilder<'a, State> {
     pub fn image_mut(&mut self, image: Arc<Mutex<RenderTexture2D>>) {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
-        let y0 = self.displacement + self.padding;
+        let y0 = self.bounds.y + self.displacement + self.padding;
         let guard = image.lock().unwrap();
         let ratio = guard.width() as f32 / guard.height() as f32;
         drop(guard);
@@ -2755,8 +2791,7 @@ impl<'a, State> ScrollBoxContainerBuilder<'a, State> {
 
     pub fn build(mut self, scroll_amount: &ScrollBoxData) -> Widget<State> {
         let offset = ((self.displacement - self.bounds.height - self.padding * 2) as f32
-            * -*scroll_amount.value.borrow()) as i32
-            + self.style.paragraph_height * 3;
+            * -*scroll_amount.value.borrow()) as i32;
         let base = Point { x: 0, y: 0 };
         let offset = Point { x: 0, y: offset };
         self.children.iter_mut().for_each(|i| i.shift(base, offset));
@@ -2842,7 +2877,7 @@ impl<'a, State> ScrollBoxContainerBuilder<'a, State> {
         let w = Widget::Canvas {
             bounds: Bounds {
                 x: self.bounds.width + self.bounds.x + self.padding,
-                y: self.displacement + self.padding,
+                y: self.bounds.y + self.displacement + self.padding,
                 width: self.bounds.width - self.padding * 2,
                 height,
             },
@@ -2859,7 +2894,7 @@ impl<'a, State> ScrollBoxContainerBuilder<'a, State> {
         let w = Widget::Rectangle {
             bounds: Bounds {
                 x: self.bounds.width + self.bounds.x + self.padding,
-                y: self.displacement + self.padding,
+                y: self.bounds.y + self.displacement + self.padding,
                 width: self.bounds.width - self.padding * 2,
                 height,
             },
@@ -2902,11 +2937,12 @@ impl<'a, State> ReversedScrollBoxContainerBuilder<'a, State> {
     pub fn text(&mut self, text: &str, text_height: i32) {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
-        let y0 = self.displacement + self.padding;
+        let y0 = self.bounds.y + self.displacement + self.padding;
         let split = split_text(text, self.handle, w, text_height);
         let height = split.len() as i32 * text_height;
         self.displacement += height + self.padding;
         self.children.push(Widget::Text {
+            verbatim_contents: text.into(),
             style: self.style,
             text_height,
             bounds: Bounds {
@@ -2922,7 +2958,7 @@ impl<'a, State> ReversedScrollBoxContainerBuilder<'a, State> {
     pub fn text_input(&mut self, data: &TextBoxData, text_height: i32, height: i32) {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
-        let y0 = self.displacement + self.padding;
+        let y0 = self.bounds.y + self.displacement + self.padding;
         let split = split_text(&data.text.borrow(), self.handle, w, text_height);
         self.displacement += height + self.padding;
         self.children.push(Widget::TextInput {
@@ -2947,13 +2983,14 @@ impl<'a, State> ReversedScrollBoxContainerBuilder<'a, State> {
     ) {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
-        let y0 = self.displacement + self.padding;
+        let y0 = self.bounds.y + self.displacement + self.padding;
         let split = split_text(text, self.handle, w - self.padding * 2, text_height);
         let height = split.len() as i32 * text_height + self.padding * 2;
         self.displacement += height;
         let b = Widget::Button {
             style: self.style,
             child: Box::new(Widget::Text {
+                verbatim_contents: text.into(),
                 style: self.style,
                 text_height,
                 bounds: Bounds {
@@ -2982,7 +3019,7 @@ impl<'a, State> ReversedScrollBoxContainerBuilder<'a, State> {
     ) {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
-        let y0 = self.displacement + self.padding;
+        let y0 = self.bounds.y + self.displacement + self.padding;
         let ratio = image.width() as f32 / image.height() as f32;
         let height = ((w - self.padding * 2) as f32 * ratio) as i32;
         self.displacement += height + self.padding * 2;
@@ -3038,7 +3075,7 @@ impl<'a, State> ReversedScrollBoxContainerBuilder<'a, State> {
             handle: self.handle,
             bounds: Bounds {
                 x: self.bounds.x + self.padding,
-                y: self.displacement + self.padding,
+                y: self.bounds.y + self.displacement + self.padding,
                 width: self.bounds.width - self.padding * 2,
                 height,
             },
@@ -3062,7 +3099,7 @@ impl<'a, State> ReversedScrollBoxContainerBuilder<'a, State> {
             handle: self.handle,
             bounds: Bounds {
                 x: self.bounds.x + self.padding,
-                y: self.displacement + self.padding,
+                y: self.bounds.y + self.displacement + self.padding,
                 width: self.bounds.width - self.padding * 2,
                 height,
             },
@@ -3083,7 +3120,7 @@ impl<'a, State> ReversedScrollBoxContainerBuilder<'a, State> {
             handle: self.handle,
             bounds: Bounds {
                 x: self.bounds.x + self.padding,
-                y: self.displacement + self.padding,
+                y: self.bounds.y + self.displacement + self.padding,
                 width: self.bounds.width - self.padding * 2,
                 height: 0,
             },
@@ -3098,7 +3135,7 @@ impl<'a, State> ReversedScrollBoxContainerBuilder<'a, State> {
     pub fn image(&mut self, image: Arc<Texture2D>) {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
-        let y0 = self.displacement + self.padding;
+        let y0 = self.bounds.y + self.displacement + self.padding;
         let ratio = image.width() as f32 / image.height() as f32;
         let height = ((w) as f32 * ratio) as i32;
         self.displacement += height + self.padding;
@@ -3118,7 +3155,7 @@ impl<'a, State> ReversedScrollBoxContainerBuilder<'a, State> {
     pub fn image_mut(&mut self, image: Arc<Mutex<RenderTexture2D>>) {
         let w = self.bounds.width - self.padding * 2;
         let x0 = self.bounds.x + self.padding;
-        let y0 = self.displacement + self.padding;
+        let y0 = self.bounds.y + self.displacement + self.padding;
         let guard = image.lock().unwrap();
         let ratio = guard.width() as f32 / guard.height() as f32;
         drop(guard);
@@ -3141,9 +3178,7 @@ impl<'a, State> ReversedScrollBoxContainerBuilder<'a, State> {
         let offset = ((self.displacement - self.bounds.height) as f32
             * (*scroll_amount.value.borrow())) as i32
             + self.bounds.height
-            - self.displacement
-            + self.style.paragraph_height * 2
-            + self.padding * 2;
+            - self.displacement;
         let base = Point { x: 0, y: 0 };
         let offset = Point { x: 0, y: offset };
         self.children.iter_mut().for_each(|i| i.shift(base, offset));
@@ -3229,7 +3264,7 @@ impl<'a, State> ReversedScrollBoxContainerBuilder<'a, State> {
         let w = Widget::Canvas {
             bounds: Bounds {
                 x: self.bounds.width + self.bounds.x + self.padding,
-                y: self.displacement + self.padding,
+                y: self.bounds.y + self.displacement + self.padding,
                 width: self.bounds.width - self.padding * 2,
                 height,
             },
@@ -3247,7 +3282,7 @@ impl<'a, State> ReversedScrollBoxContainerBuilder<'a, State> {
         let w = Widget::Rectangle {
             bounds: Bounds {
                 x: self.bounds.width + self.bounds.x + self.padding,
-                y: self.displacement + self.padding,
+                y: self.bounds.y + self.displacement + self.padding,
                 width: self.bounds.width - self.padding * 2,
                 height,
             },

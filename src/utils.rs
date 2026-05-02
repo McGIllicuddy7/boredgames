@@ -22,13 +22,16 @@ use tokio::{
 pub struct Stream<T: Serialize + DeserializeOwned> {
     data: PhantomData<T>,
     stream: Mutex<TcpStream>,
+    addr: IpAddr,
     has_failed_at_some_point: AtomicBool,
 }
 impl<T: DeserializeOwned + Serialize> Stream<T> {
     pub fn new(st: TcpStream) -> Self {
+        let addr = st.local_addr().unwrap().ip();
         Self {
             data: Default::default(),
             stream: Mutex::new(st),
+            addr,
             has_failed_at_some_point: AtomicBool::new(false),
         }
     }
@@ -454,12 +457,7 @@ impl<T: Serialize + DeserializeOwned + Clone> BStream<T> {
 
     pub fn get_ip_address(&self) -> Option<IpAddr> {
         match &self.inner {
-            BStreamInner::Network(stream) => {
-                if let Ok(a) = stream.stream.blocking_lock().peer_addr() {
-                    return Some(a.ip());
-                }
-                return None;
-            }
+            BStreamInner::Network(stream) => Some(stream.addr),
             BStreamInner::Local(_) => None,
         }
     }
@@ -984,9 +982,14 @@ impl<
         }
     }
     pub fn take_lock<'a>(&'a self) -> std::sync::MutexGuard<'a, HashMap<Key, Value>> {
-        match self.table.lock() {
+        match self.table.try_lock() {
             Ok(x) => x,
-            Err(x) => x.into_inner(),
+            Err(x) => match x {
+                std::sync::TryLockError::Poisoned(x) => x.into_inner(),
+                std::sync::TryLockError::WouldBlock => {
+                    panic!("would block")
+                }
+            },
         }
     }
 
@@ -1128,6 +1131,11 @@ impl<Value: Serialize + DeserializeOwned + Clone> Table<Arc<str>, Value> {
                 let Some(name) = name.to_str() else {
                     continue;
                 };
+                let extension = if let Some(e) = extension.strip_prefix(".") {
+                    e
+                } else {
+                    extension
+                };
                 if let Some(ext) = pth.extension() {
                     if let Some(ext) = ext.to_str() {
                         if ext == extension {
@@ -1141,7 +1149,7 @@ impl<Value: Serialize + DeserializeOwned + Clone> Table<Arc<str>, Value> {
                 }
                 if should_load {
                     let v = if let Some(func) = custom.as_mut() {
-                        func(name.into())?
+                        func(pth.to_str().unwrap().into())?
                     } else {
                         let s = std::fs::read(&pth)?;
                         let Ok(x) = rmp_serde::from_slice(&s) else {
@@ -1169,7 +1177,12 @@ impl<Value: Serialize + DeserializeOwned + Clone> Table<Arc<str>, Value> {
     ) -> Result<(), std::io::Error> {
         let g = self.take_lock();
         for (key, value) in g.iter() {
-            let name = path.to_string() + "/" + &key.to_string() + extension;
+            let k = if let Some(t) = key.strip_suffix(extension) {
+                t
+            } else {
+                key.as_ref()
+            };
+            let name = path.to_string() + "/" + &k + extension;
             if let Some(func) = custom.as_mut() {
                 func(name.clone().into(), value).unwrap();
             } else {
@@ -1267,9 +1280,14 @@ impl<T: Serialize + DeserializeOwned + Default + Send + Sync> Config<T> {
         }
     }
     pub fn unsafe_mutable_inner_get<'a>(&'a self) -> std::sync::MutexGuard<'a, Option<T>> {
-        let mut tmp = match self.inner.lock() {
+        let mut tmp = match self.inner.try_lock() {
             Ok(x) => x,
-            Err(x) => x.into_inner(),
+            Err(x) => match x {
+                std::sync::TryLockError::Poisoned(x) => x.into_inner(),
+                std::sync::TryLockError::WouldBlock => {
+                    panic!("would block");
+                }
+            },
         };
         let mut errored = false;
         if tmp.is_none() {
