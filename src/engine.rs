@@ -20,7 +20,7 @@ use tokio::{
 };
 
 use crate::{
-    gui::{Bounds, GUI, Point, ScrollBoxData, TextBoxData},
+    libgui::{Bounds, GUI, Point, ScrollBoxData, TextBoxData},
     utils::{
         BPipe, BStream, Config, ObjectId, PriorityQueue, SharedList, Stream, Table, generate_id,
     },
@@ -62,6 +62,7 @@ pub struct Object {
     pub id: ObjectId,
     pub bounds: Bounds,
     pub data: ObjectData,
+    pub layer: Layer,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Copy, PartialEq)]
@@ -218,9 +219,10 @@ pub struct ClientGuiState {
     pub level_to_load: Option<Arc<str>>,
     pub level_select_scroll_box_data: ScrollBoxData,
     pub set_level_name_data: TextBoxData,
+    pub selected_layer: Layer,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Copy)]
 pub enum Layer {
     Background,
     Token,
@@ -344,8 +346,8 @@ impl ClientState {
                 } else {
                     gui.button("enumerate", 16, |ns| ns.should_enumerate = true);
                 }
-                gui.p1(format!("object size:{}", ns.object_size));
-                gui.button_2("increase object size", |state| {
+                gui.p2(format!("object size:{}", ns.object_size));
+                gui.button_3("increase object size", |state| {
                     state.object_size += 1;
                     if state.object_size < 1 {
                         state.object_size = 1;
@@ -354,7 +356,7 @@ impl ClientState {
                         state.object_size = 10;
                     }
                 });
-                gui.button_2("decrease object size", |state| {
+                gui.button_3("decrease object size", |state| {
                     state.object_size -= 1;
                     if state.object_size < 1 {
                         state.object_size = 1;
@@ -363,7 +365,7 @@ impl ClientState {
                         state.object_size = 10;
                     }
                 });
-                gui.button_1("scale up", |state| {
+                gui.button_3("scale up", |state| {
                     state.dim_scale += 5;
                     if state.dim_scale > 100 {
                         state.dim_scale = 100;
@@ -372,7 +374,7 @@ impl ClientState {
                         state.dim_scale = 5;
                     }
                 });
-                gui.button_1("scale down", |state| {
+                gui.button_3("scale down", |state| {
                     state.dim_scale -= 5;
                     if state.dim_scale > 100 {
                         state.dim_scale = 100;
@@ -381,10 +383,31 @@ impl ClientState {
                         state.dim_scale = 5;
                     }
                 });
-                gui.button_1("recenter", |state| {
+                gui.button_3("recenter", |state| {
                     state.dim_scale = 25;
                     state.base_x = 0;
                     state.base_y = 0;
+                });
+                gui.p3(format!(
+                    "current layer:{}",
+                    match ns.selected_layer {
+                        Layer::Background => "background",
+                        Layer::Token => "tokens",
+                        Layer::Foreground => "foreground",
+                        Layer::Gm => "gm",
+                    }
+                ));
+                gui.button_3("layer background", |state| {
+                    state.selected_layer = Layer::Background;
+                });
+                gui.button_3("layer tokens", |state| {
+                    state.selected_layer = Layer::Token;
+                });
+                gui.button_3("layer foreground", |state| {
+                    state.selected_layer = Layer::Foreground;
+                });
+                gui.button_3("layer gm", |state| {
+                    state.selected_layer = Layer::Gm;
                 });
                 gui.p2(format!("level name:{}", ns.state.name));
                 gui.p4("edit level name");
@@ -463,7 +486,46 @@ impl ClientState {
                     | ClientMode::PlacingTokens { selected_image: _ } => ObjectId::new_invalid(),
                 };
                 let mut list = state.state.render_list.clone();
-                while let Some(id) = list.next_value() {
+                let mut sorted_objects = Vec::new();
+                let mut list_bg = list.clone();
+                let mut list_tokens = list.clone();
+                let mut list_fg = list.clone();
+                let mut list_gm = list.clone();
+                while let Some(id) = list_bg.next_value() {
+                    let Some(obj) = state.state.objects.get_mut(&id) else {
+                        continue;
+                    };
+                    if obj.layer == Layer::Background {
+                        sorted_objects.push(id);
+                    }
+                }
+                while let Some(id) = list_tokens.next_value() {
+                    let Some(obj) = state.state.objects.get_mut(&id) else {
+                        continue;
+                    };
+                    if obj.layer == Layer::Token {
+                        sorted_objects.push(id);
+                    }
+                }
+                while let Some(id) = list_fg.next_value() {
+                    let Some(obj) = state.state.objects.get_mut(&id) else {
+                        continue;
+                    };
+                    if obj.layer == Layer::Foreground {
+                        sorted_objects.push(id);
+                    }
+                }
+                if state.selected_layer == Layer::Gm {
+                    while let Some(id) = list_gm.next_value() {
+                        let Some(obj) = state.state.objects.get_mut(&id) else {
+                            continue;
+                        };
+                        if obj.layer == Layer::Gm {
+                            sorted_objects.push(id);
+                        }
+                    }
+                }
+                for id in sorted_objects.clone() {
                     let Some(obj) = state.state.objects.get_mut(&id) else {
                         continue;
                     };
@@ -709,10 +771,13 @@ impl ClientState {
                             if mouse_pressed {
                                 let mut new_selected = ObjectId::new_invalid();
                                 let mut list = state.state.render_list.clone();
-                                while let Some(id) = list.next_value_rev() {
+                                for id in sorted_objects.iter().rev() {
                                     let Some(i) = state.state.objects.get_mut(&id) else {
                                         continue;
                                     };
+                                    if i.layer != ns.selected_layer {
+                                        continue;
+                                    }
                                     let bounds_act = Bounds {
                                         x: (i.bounds.x + base_x) * dim,
                                         y: (i.bounds.y + base_y) * dim,
@@ -731,10 +796,13 @@ impl ClientState {
                             {
                                 let mut deleted = Vec::new();
                                 let mut list = state.state.render_list.clone();
-                                while let Some(id) = list.next_value_rev() {
+                                for id in sorted_objects.iter().rev() {
                                     let Some(i) = state.state.objects.get_mut(&id) else {
                                         continue;
                                     };
+                                    if i.layer != ns.selected_layer {
+                                        continue;
+                                    }
                                     let bounds_act = Bounds {
                                         x: (i.bounds.x + base_x) * dim,
                                         y: (i.bounds.y + base_y) * dim,
@@ -752,11 +820,13 @@ impl ClientState {
                                 }
                             }
                             if handle.is_key_pressed(raylib::ffi::KeyboardKey::KEY_B) {
-                                let mut list = state.state.render_list.clone();
-                                while let Some(id) = list.next_value_rev() {
+                                for id in sorted_objects.iter().rev() {
                                     let Some(i) = state.state.objects.get_mut(&id) else {
                                         continue;
                                     };
+                                    if i.layer != ns.selected_layer {
+                                        continue;
+                                    }
                                     let bounds_act = Bounds {
                                         x: (i.bounds.x + base_x) * dim,
                                         y: (i.bounds.y + base_y) * dim,
@@ -764,7 +834,126 @@ impl ClientState {
                                         height: i.bounds.height * dim,
                                     };
                                     if bounds_act.contains_point(mouse_pos) {
-                                        send_to_back_stack.push_back(id);
+                                        send_to_back_stack.push_back(id.clone());
+                                        break;
+                                    }
+                                }
+                            }
+                            if handle.is_key_down(raylib::ffi::KeyboardKey::KEY_LEFT_SHIFT)
+                                && handle.is_key_pressed(raylib::ffi::KeyboardKey::KEY_N)
+                            {
+                                let mut list = state.state.render_list.clone();
+                                let mut n = state.next_name();
+                                for id in sorted_objects.iter().rev() {
+                                    let Some(i) = state.state.objects.get_mut(&id) else {
+                                        continue;
+                                    };
+                                    if i.layer != ns.selected_layer {
+                                        continue;
+                                    }
+
+                                    let bounds_act = Bounds {
+                                        x: (i.bounds.x + base_x) * dim,
+                                        y: (i.bounds.y + base_y) * dim,
+                                        width: i.bounds.width * dim,
+                                        height: i.bounds.height * dim,
+                                    };
+                                    if bounds_act.contains_point(mouse_pos) {
+                                        i.name = n.clone().into();
+                                        update_stack.push_back(id.clone());
+                                        break;
+                                    }
+                                }
+                            }
+                            if handle.is_key_down(raylib::ffi::KeyboardKey::KEY_LEFT_SHIFT)
+                                && handle.is_key_pressed(raylib::ffi::KeyboardKey::KEY_UP)
+                            {
+                                let mut list = state.state.render_list.clone();
+                                let mut n = state.next_name();
+                                for id in sorted_objects.iter().rev() {
+                                    let Some(i) = state.state.objects.get_mut(&id) else {
+                                        continue;
+                                    };
+                                    if i.layer != ns.selected_layer {
+                                        continue;
+                                    }
+
+                                    let bounds_act = Bounds {
+                                        x: (i.bounds.x + base_x) * dim,
+                                        y: (i.bounds.y + base_y) * dim,
+                                        width: i.bounds.width * dim,
+                                        height: i.bounds.height * dim,
+                                    };
+                                    if bounds_act.contains_point(mouse_pos) {
+                                        i.layer = match i.layer {
+                                            Layer::Background => Layer::Token,
+                                            Layer::Token => Layer::Foreground,
+                                            Layer::Foreground => Layer::Background,
+                                            Layer::Gm => Layer::Gm,
+                                        };
+                                        update_stack.push_back(id.clone());
+                                        break;
+                                    }
+                                }
+                            }
+                            if handle.is_key_down(raylib::ffi::KeyboardKey::KEY_LEFT_SHIFT)
+                                && handle.is_key_pressed(raylib::ffi::KeyboardKey::KEY_DOWN)
+                            {
+                                let mut list = state.state.render_list.clone();
+                                let mut n = state.next_name();
+                                for id in sorted_objects.iter().rev() {
+                                    let Some(i) = state.state.objects.get_mut(&id) else {
+                                        continue;
+                                    };
+                                    if i.layer != ns.selected_layer {
+                                        continue;
+                                    }
+
+                                    let bounds_act = Bounds {
+                                        x: (i.bounds.x + base_x) * dim,
+                                        y: (i.bounds.y + base_y) * dim,
+                                        width: i.bounds.width * dim,
+                                        height: i.bounds.height * dim,
+                                    };
+                                    if bounds_act.contains_point(mouse_pos) {
+                                        i.layer = match i.layer {
+                                            Layer::Background => Layer::Foreground,
+                                            Layer::Token => Layer::Background,
+                                            Layer::Foreground => Layer::Token,
+                                            Layer::Gm => Layer::Gm,
+                                        };
+                                        update_stack.push_back(id.clone());
+                                        break;
+                                    }
+                                }
+                            }
+                            if handle.is_key_down(raylib::ffi::KeyboardKey::KEY_LEFT_SHIFT)
+                                && handle.is_key_pressed(raylib::ffi::KeyboardKey::KEY_H)
+                            {
+                                let mut list = state.state.render_list.clone();
+                                let mut n = state.next_name();
+                                for id in sorted_objects.iter().rev() {
+                                    let Some(i) = state.state.objects.get_mut(&id) else {
+                                        continue;
+                                    };
+                                    if i.layer != ns.selected_layer {
+                                        continue;
+                                    }
+
+                                    let bounds_act = Bounds {
+                                        x: (i.bounds.x + base_x) * dim,
+                                        y: (i.bounds.y + base_y) * dim,
+                                        width: i.bounds.width * dim,
+                                        height: i.bounds.height * dim,
+                                    };
+                                    if bounds_act.contains_point(mouse_pos) {
+                                        i.layer = match i.layer {
+                                            Layer::Background => Layer::Gm,
+                                            Layer::Token => Layer::Gm,
+                                            Layer::Foreground => Layer::Gm,
+                                            Layer::Gm => Layer::Token,
+                                        };
+                                        update_stack.push_back(id.clone());
                                         break;
                                     }
                                 }
@@ -792,6 +981,7 @@ impl ClientState {
                                 let p0_y = mouse_pos.y / dim - base_y;
                                 let id = ObjectId::new();
                                 let obj = Object {
+                                    layer: ns.selected_layer,
                                     name: nm,
                                     owner: state.id.clone(),
                                     id: id.clone(),
@@ -906,6 +1096,7 @@ impl ClientState {
                         let id = generate_id();
                         let nm = state.next_name();
                         let mut object = Object {
+                            layer: ns.selected_layer,
                             name: nm,
                             owner: state.id.clone(),
                             id: id.clone(),
@@ -929,6 +1120,7 @@ impl ClientState {
                         let id = generate_id();
                         let nm = state.next_name();
                         let mut object = Object {
+                            layer: ns.selected_layer,
                             name: nm,
                             owner: state.id.clone(),
                             id: id.clone(),
@@ -963,6 +1155,7 @@ impl ClientState {
                         let id = generate_id();
                         let nm = state.next_name();
                         let mut object = Object {
+                            layer: ns.selected_layer,
                             name: nm,
                             owner: state.id.clone(),
                             id: id.clone(),
@@ -1025,9 +1218,7 @@ impl ClientState {
                             state.base_x = -100;
                         }
                     }
-                    if handle.is_key_down(raylib::ffi::KeyboardKey::KEY_LEFT_SHIFT)
-                        && (state.tick % 45 == 0)
-                    {
+                    if handle.get_mouse_wheel_move() < -1.0 && (state.tick % 5 == 0) {
                         state.dim_scale -= 5;
                         if state.dim_scale > 100 {
                             state.dim_scale = 100;
@@ -1036,8 +1227,7 @@ impl ClientState {
                             state.dim_scale = 5;
                         }
                     }
-                    if handle.is_key_down(raylib::ffi::KeyboardKey::KEY_V) && (state.tick % 45 == 0)
-                    {
+                    if handle.get_mouse_wheel_move() > 1.0 && (state.tick % 5 == 0) {
                         state.dim_scale += 5;
                         if state.dim_scale > 100 {
                             state.dim_scale = 100;
@@ -1230,6 +1420,10 @@ impl ClientState {
             && self.gui_state.state.images.contains_key(&*x)
         {
             self.gui_state.state.background_image = x.clone().into();
+            if let Some(x) = self.gui_state.state.images.get(&*x) {
+                self.gui_state.state.background_image_width = x.width;
+                self.gui_state.state.background_image_height = x.height;
+            }
             let ev = Event {
                 source: self.gui_state.id.clone(),
                 data: EventData::SetBackgroundImage {
@@ -1548,7 +1742,7 @@ impl ClientState {
             messages: Vec::new(),
             images: HashMap::new(),
         };
-        let mut images = config_get_images();
+        let images = config_get_images();
         if let Some(con) = con.as_ref() {
             con.send(&Event {
                 source: id.clone(),
@@ -1577,10 +1771,15 @@ impl ClientState {
                 .await?;
                 istate.images.insert(i.0.clone(), i.1.clone());
             }
+        } else {
+            for i in &images {
+                istate.images.insert(i.0.clone(), i.1.clone());
+            }
         };
         let mut slf = Self {
             con,
             gui_state: ClientGuiState {
+                selected_layer: Layer::Token,
                 level_to_load: None,
                 levels: config_get_levels(),
                 tick: 0,
