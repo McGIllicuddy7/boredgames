@@ -63,6 +63,8 @@ pub enum DrawCommand {
     Shader {
         shader: Arc<Mutex<Shader>>,
         commands: Vec<DrawCommand>,
+        foreground: Vec<DrawCommand>,
+        far_foreground: Vec<DrawCommand>,
     },
     MutateShader {
         shader: Arc<Mutex<Shader>>,
@@ -70,6 +72,8 @@ pub enum DrawCommand {
     },
     Scissor {
         children: Vec<DrawCommand>,
+        foreground: Vec<DrawCommand>,
+        far_foreground: Vec<DrawCommand>,
         bounds: Bounds,
     },
     DrawRectangle {
@@ -129,8 +133,16 @@ impl DrawCommand {
             DrawCommand::Shader {
                 shader: _,
                 commands,
+                foreground,
+                far_foreground,
             } => {
                 for i in commands {
+                    i.set_origin(point);
+                }
+                for i in foreground {
+                    i.set_origin(point);
+                }
+                for i in far_foreground {
                     i.set_origin(point);
                 }
             }
@@ -138,10 +150,21 @@ impl DrawCommand {
                 shader: _,
                 function: _,
             } => {}
-            DrawCommand::Scissor { children, bounds } => {
+            DrawCommand::Scissor {
+                children,
+                bounds,
+                foreground,
+                far_foreground,
+            } => {
                 bounds.x += point.x;
                 bounds.y += point.y;
                 for i in children {
+                    i.set_origin(point);
+                }
+                for i in foreground {
+                    i.set_origin(point);
+                }
+                for i in far_foreground {
                     i.set_origin(point);
                 }
             }
@@ -228,8 +251,16 @@ impl DrawCommand {
             DrawCommand::Shader {
                 shader: _,
                 commands,
+                foreground,
+                far_foreground,
             } => {
                 for i in commands {
+                    i.set_scale(scale_x, scale_y);
+                }
+                for i in foreground {
+                    i.set_scale(scale_x, scale_y);
+                }
+                for i in far_foreground {
                     i.set_scale(scale_x, scale_y);
                 }
             }
@@ -237,12 +268,23 @@ impl DrawCommand {
                 shader: _,
                 function: _,
             } => {}
-            DrawCommand::Scissor { children, bounds } => {
+            DrawCommand::Scissor {
+                children,
+                bounds,
+                far_foreground,
+                foreground,
+            } => {
                 bounds.x = (bounds.x as f32 * scale_x) as i32;
                 bounds.y = (bounds.y as f32 * scale_y) as i32;
                 bounds.width = (bounds.width as f32 * scale_x) as i32;
                 bounds.height = (bounds.height as f32 * scale_y) as i32;
                 for i in children {
+                    i.set_scale(scale_x, scale_y);
+                }
+                for i in foreground {
+                    i.set_scale(scale_x, scale_y);
+                }
+                for i in far_foreground {
                     i.set_scale(scale_x, scale_y);
                 }
             }
@@ -331,16 +373,22 @@ impl DrawCommand {
 pub struct CommandBuffer {
     render_texture_calls: Vec<RenderTextureCmdBuffer>,
     calls: Vec<DrawCommand>,
+    foreground_calls: Vec<DrawCommand>,
+    far_foreground_calls: Vec<DrawCommand>,
 }
 
 #[derive(Clone)]
 pub struct RenderTextureCmdBuffer {
     texture: Arc<Mutex<RenderTexture2D>>,
     commands: Vec<DrawCommand>,
+    foreground_calls: Vec<DrawCommand>,
+    far_foreground_calls: Vec<DrawCommand>,
 }
 
 pub struct CommandBufferBuilder {
     values: Vec<DrawCommand>,
+    foreground_calls: Vec<DrawCommand>,
+    far_foreground_calls: Vec<DrawCommand>,
     render_texture_commands: Vec<RenderTextureCmdBuffer>,
 }
 impl Default for CommandBufferBuilder {
@@ -352,6 +400,8 @@ impl Default for CommandBufferBuilder {
 impl CommandBufferBuilder {
     pub fn new() -> Self {
         Self {
+            foreground_calls: Vec::new(),
+            far_foreground_calls: Vec::new(),
             values: Vec::new(),
             render_texture_commands: Vec::new(),
         }
@@ -544,6 +594,8 @@ impl CommandBufferBuilder {
         }
         let cmd = DrawCommand::Scissor {
             children: tmp.values,
+            foreground: tmp.foreground_calls,
+            far_foreground: tmp.far_foreground_calls,
             bounds: Bounds {
                 x,
                 y,
@@ -566,6 +618,8 @@ impl CommandBufferBuilder {
             self.render_texture_commands.push(i);
         }
         let cmds = RenderTextureCmdBuffer {
+            foreground_calls: tmp.foreground_calls,
+            far_foreground_calls: tmp.far_foreground_calls,
             texture: target.clone(),
             commands: tmp.values,
         };
@@ -575,6 +629,8 @@ impl CommandBufferBuilder {
 
     pub fn build(self) -> CommandBuffer {
         CommandBuffer {
+            far_foreground_calls: self.far_foreground_calls,
+            foreground_calls: self.foreground_calls,
             render_texture_calls: self.render_texture_commands,
             calls: self.values,
         }
@@ -586,6 +642,12 @@ impl CommandBufferBuilder {
         }
         for j in commands.render_texture_calls {
             self.render_texture_commands.push(j);
+        }
+        for i in commands.foreground_calls {
+            self.foreground_calls.push(i);
+        }
+        for i in commands.far_foreground_calls {
+            self.far_foreground_calls.push(i);
         }
     }
 
@@ -600,6 +662,8 @@ impl CommandBufferBuilder {
             self.render_texture_commands.push(i);
         }
         let cmd = DrawCommand::Shader {
+            far_foreground: tmp.far_foreground_calls,
+            foreground: tmp.foreground_calls,
             shader: shader.clone(),
             commands: tmp.values,
         };
@@ -616,6 +680,525 @@ impl CommandBufferBuilder {
             shader: shader.clone(),
             function: Arc::new(Mutex::new(Box::new(to_run))),
         });
+    }
+
+    pub fn draw_rectangle_foreground(
+        &mut self,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        color: Color,
+    ) {
+        self.foreground_calls.push(DrawCommand::DrawRectangle {
+            color,
+            bounds: Bounds {
+                x,
+                y,
+                width,
+                height,
+            },
+        });
+    }
+
+    pub fn draw_text_foreground(
+        &mut self,
+        text: impl Into<Arc<str>>,
+        x: i32,
+        y: i32,
+        text_height: i32,
+        color: Color,
+    ) {
+        self.foreground_calls.push(DrawCommand::DrawText {
+            pos_x: x,
+            pos_y: y,
+            text_height,
+            color,
+            text: text.into(),
+        });
+    }
+
+    pub fn clear_background_foreground(&mut self, color: Color) {
+        self.foreground_calls
+            .push(DrawCommand::ClearBackground { color })
+    }
+
+    pub fn draw_texture_foreground(&mut self, image: &Arc<Texture2D>, x: i32, y: i32) {
+        self.foreground_calls.push(DrawCommand::DrawTexture {
+            image: image.clone(),
+            bounds: Bounds {
+                x,
+                y,
+                width: image.width(),
+                height: image.height(),
+            },
+            rotation: 0.0,
+            tint: Color::WHITE,
+        });
+    }
+
+    pub fn draw_texture_rotated_foreground(
+        &mut self,
+        image: &Arc<Texture2D>,
+        x: i32,
+        y: i32,
+        rotation: f32,
+    ) {
+        self.foreground_calls.push(DrawCommand::DrawTexture {
+            image: image.clone(),
+            bounds: Bounds {
+                x,
+                y,
+                width: image.width(),
+                height: image.height(),
+            },
+            rotation,
+            tint: Color::WHITE,
+        });
+    }
+    pub fn draw_texture_scaled_foreground(
+        &mut self,
+        image: &Arc<Texture2D>,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    ) {
+        self.foreground_calls.push(DrawCommand::DrawTexture {
+            image: image.clone(),
+            bounds: Bounds {
+                x,
+                y,
+                width,
+                height,
+            },
+            rotation: 0.0,
+            tint: Color::WHITE,
+        });
+    }
+
+    pub fn draw_texture_scaled_rotated_foreground(
+        &mut self,
+        image: &Arc<Texture2D>,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        rotation: f32,
+    ) {
+        self.foreground_calls.push(DrawCommand::DrawTexture {
+            image: image.clone(),
+            bounds: Bounds {
+                x,
+                y,
+                width,
+                height,
+            },
+            rotation,
+            tint: Color::WHITE,
+        });
+    }
+
+    pub fn draw_render_texture_foreground(
+        &mut self,
+        image: &Arc<Mutex<RenderTexture2D>>,
+        x: i32,
+        y: i32,
+    ) {
+        let t = image.lock().unwrap();
+        let width = t.width();
+        let height = t.height();
+        self.foreground_calls.push(DrawCommand::DrawRenderTexture {
+            image: image.clone(),
+            bounds: Bounds {
+                x,
+                y,
+                width,
+                height,
+            },
+            rotation: 0.0,
+            tint: Color::WHITE,
+        });
+    }
+
+    pub fn draw_render_texture_scaled_foreground(
+        &mut self,
+        image: &Arc<Mutex<RenderTexture2D>>,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    ) {
+        self.foreground_calls.push(DrawCommand::DrawRenderTexture {
+            image: image.clone(),
+            bounds: Bounds {
+                x,
+                y,
+                width,
+                height,
+            },
+            rotation: 0.0,
+            tint: Color::WHITE,
+        });
+    }
+
+    pub fn draw_circle_foreground(&mut self, x: i32, y: i32, r: f32, color: Color) {
+        self.foreground_calls
+            .push(DrawCommand::DrawCircle { x, y, r, color });
+    }
+
+    pub fn draw_line_foreground(
+        &mut self,
+        x0: i32,
+        y0: i32,
+        x1: i32,
+        y1: i32,
+        width: f32,
+        color: Color,
+    ) {
+        self.foreground_calls.push(DrawCommand::DrawLine {
+            x0,
+            y0,
+            x1,
+            y1,
+            width,
+            color,
+        });
+    }
+
+    pub fn draw_lines_foreground(
+        &mut self,
+        points: impl Into<Vec<Point>>,
+        width: f32,
+        color: Color,
+    ) {
+        self.foreground_calls.push(DrawCommand::DrawPointsLines {
+            points: points.into(),
+            width,
+            color,
+        })
+    }
+
+    pub fn draw_points_foreground(
+        &mut self,
+        points: impl Into<Vec<Point>>,
+        radii: f32,
+        color: Color,
+    ) {
+        self.foreground_calls.push(DrawCommand::DrawPoints {
+            points: points.into(),
+            radii,
+            color,
+        })
+    }
+
+    pub fn scissor_foreground<T>(
+        &mut self,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        to_run: impl FnOnce(&mut CommandBufferBuilder) -> T,
+    ) -> T {
+        let mut tmp = CommandBufferBuilder::new();
+        let out = to_run(&mut tmp);
+        for i in tmp.render_texture_commands {
+            self.render_texture_commands.push(i);
+        }
+        let cmd = DrawCommand::Scissor {
+            children: tmp.values,
+            foreground: tmp.foreground_calls,
+            far_foreground: tmp.far_foreground_calls,
+            bounds: Bounds {
+                x,
+                y,
+                width,
+                height,
+            },
+        };
+        self.foreground_calls.push(cmd);
+        out
+    }
+
+    pub fn shader_foreground<T>(
+        &mut self,
+        shader: &Arc<Mutex<Shader>>,
+        to_run: impl FnOnce(&mut CommandBufferBuilder) -> T,
+    ) -> T {
+        let mut tmp = CommandBufferBuilder::new();
+        let out = to_run(&mut tmp);
+        for i in tmp.render_texture_commands {
+            self.render_texture_commands.push(i);
+        }
+        let cmd = DrawCommand::Shader {
+            far_foreground: tmp.far_foreground_calls,
+            foreground: tmp.foreground_calls,
+            shader: shader.clone(),
+            commands: tmp.values,
+        };
+        self.foreground_calls.push(cmd);
+        out
+    }
+
+    pub fn draw_rectangle_far_foreground(
+        &mut self,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        color: Color,
+    ) {
+        self.far_foreground_calls.push(DrawCommand::DrawRectangle {
+            color,
+            bounds: Bounds {
+                x,
+                y,
+                width,
+                height,
+            },
+        });
+    }
+
+    pub fn draw_text_far_foreground(
+        &mut self,
+        text: impl Into<Arc<str>>,
+        x: i32,
+        y: i32,
+        text_height: i32,
+        color: Color,
+    ) {
+        self.far_foreground_calls.push(DrawCommand::DrawText {
+            pos_x: x,
+            pos_y: y,
+            text_height,
+            color,
+            text: text.into(),
+        });
+    }
+
+    pub fn clear_background_far_foreground(&mut self, color: Color) {
+        self.far_foreground_calls
+            .push(DrawCommand::ClearBackground { color })
+    }
+
+    pub fn draw_texture_far_foreground(&mut self, image: &Arc<Texture2D>, x: i32, y: i32) {
+        self.far_foreground_calls.push(DrawCommand::DrawTexture {
+            image: image.clone(),
+            bounds: Bounds {
+                x,
+                y,
+                width: image.width(),
+                height: image.height(),
+            },
+            rotation: 0.0,
+            tint: Color::WHITE,
+        });
+    }
+
+    pub fn draw_texture_rotated_far_foreground(
+        &mut self,
+        image: &Arc<Texture2D>,
+        x: i32,
+        y: i32,
+        rotation: f32,
+    ) {
+        self.far_foreground_calls.push(DrawCommand::DrawTexture {
+            image: image.clone(),
+            bounds: Bounds {
+                x,
+                y,
+                width: image.width(),
+                height: image.height(),
+            },
+            rotation,
+            tint: Color::WHITE,
+        });
+    }
+    pub fn draw_texture_scaled_far_foreground(
+        &mut self,
+        image: &Arc<Texture2D>,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    ) {
+        self.far_foreground_calls.push(DrawCommand::DrawTexture {
+            image: image.clone(),
+            bounds: Bounds {
+                x,
+                y,
+                width,
+                height,
+            },
+            rotation: 0.0,
+            tint: Color::WHITE,
+        });
+    }
+
+    pub fn draw_texture_scaled_rotated_far_foreground(
+        &mut self,
+        image: &Arc<Texture2D>,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        rotation: f32,
+    ) {
+        self.far_foreground_calls.push(DrawCommand::DrawTexture {
+            image: image.clone(),
+            bounds: Bounds {
+                x,
+                y,
+                width,
+                height,
+            },
+            rotation,
+            tint: Color::WHITE,
+        });
+    }
+
+    pub fn draw_render_texture_far_foreground(
+        &mut self,
+        image: &Arc<Mutex<RenderTexture2D>>,
+        x: i32,
+        y: i32,
+    ) {
+        let t = image.lock().unwrap();
+        let width = t.width();
+        let height = t.height();
+        self.far_foreground_calls
+            .push(DrawCommand::DrawRenderTexture {
+                image: image.clone(),
+                bounds: Bounds {
+                    x,
+                    y,
+                    width,
+                    height,
+                },
+                rotation: 0.0,
+                tint: Color::WHITE,
+            });
+    }
+
+    pub fn draw_render_texture_scaled_far_foreground(
+        &mut self,
+        image: &Arc<Mutex<RenderTexture2D>>,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+    ) {
+        self.far_foreground_calls
+            .push(DrawCommand::DrawRenderTexture {
+                image: image.clone(),
+                bounds: Bounds {
+                    x,
+                    y,
+                    width,
+                    height,
+                },
+                rotation: 0.0,
+                tint: Color::WHITE,
+            });
+    }
+
+    pub fn draw_circle_far_foreground(&mut self, x: i32, y: i32, r: f32, color: Color) {
+        self.far_foreground_calls
+            .push(DrawCommand::DrawCircle { x, y, r, color });
+    }
+
+    pub fn draw_line_far_foreground(
+        &mut self,
+        x0: i32,
+        y0: i32,
+        x1: i32,
+        y1: i32,
+        width: f32,
+        color: Color,
+    ) {
+        self.far_foreground_calls.push(DrawCommand::DrawLine {
+            x0,
+            y0,
+            x1,
+            y1,
+            width,
+            color,
+        });
+    }
+
+    pub fn draw_lines_far_foreground(
+        &mut self,
+        points: impl Into<Vec<Point>>,
+        width: f32,
+        color: Color,
+    ) {
+        self.far_foreground_calls
+            .push(DrawCommand::DrawPointsLines {
+                points: points.into(),
+                width,
+                color,
+            })
+    }
+
+    pub fn draw_points_far_foreground(
+        &mut self,
+        points: impl Into<Vec<Point>>,
+        radii: f32,
+        color: Color,
+    ) {
+        self.far_foreground_calls.push(DrawCommand::DrawPoints {
+            points: points.into(),
+            radii,
+            color,
+        })
+    }
+
+    pub fn scissor_far_foreground<T>(
+        &mut self,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        to_run: impl FnOnce(&mut CommandBufferBuilder) -> T,
+    ) -> T {
+        let mut tmp = CommandBufferBuilder::new();
+        let out = to_run(&mut tmp);
+        for i in tmp.render_texture_commands {
+            self.render_texture_commands.push(i);
+        }
+        let cmd = DrawCommand::Scissor {
+            children: tmp.values,
+            foreground: tmp.foreground_calls,
+            far_foreground: tmp.far_foreground_calls,
+            bounds: Bounds {
+                x,
+                y,
+                width,
+                height,
+            },
+        };
+        self.foreground_calls.push(cmd);
+        out
+    }
+
+    pub fn shader_far_foreground<T>(
+        &mut self,
+        shader: &Arc<Mutex<Shader>>,
+        to_run: impl FnOnce(&mut CommandBufferBuilder) -> T,
+    ) -> T {
+        let mut tmp = CommandBufferBuilder::new();
+        let out = to_run(&mut tmp);
+        for i in tmp.render_texture_commands {
+            self.render_texture_commands.push(i);
+        }
+        let cmd = DrawCommand::Shader {
+            far_foreground: tmp.far_foreground_calls,
+            foreground: tmp.foreground_calls,
+            shader: shader.clone(),
+            commands: tmp.values,
+        };
+        self.foreground_calls.push(cmd);
+        out
     }
 }
 
@@ -639,6 +1222,12 @@ impl CommandBuffer {
         for i in &mut self.calls {
             Self::run_command(i, &mut draw, thread);
         }
+        for i in &mut self.foreground_calls {
+            Self::run_command(i, &mut draw, thread);
+        }
+        for i in &mut self.far_foreground_calls {
+            Self::run_command(i, &mut draw, thread);
+        }
     }
 
     pub fn run_fps(&mut self, handle: &mut RaylibHandle, thread: &RaylibThread) {
@@ -659,10 +1248,21 @@ impl CommandBuffer {
         thread: &RaylibThread,
     ) {
         match cmd {
-            DrawCommand::Shader { shader, commands } => {
+            DrawCommand::Shader {
+                shader,
+                commands,
+                foreground,
+                far_foreground,
+            } => {
                 let mut guard = shader.lock().unwrap();
                 let mut mode = handle.begin_shader_mode(&mut guard);
                 for i in commands {
+                    Self::run_command(i, &mut mode, thread);
+                }
+                for i in foreground {
+                    Self::run_command(i, &mut mode, thread);
+                }
+                for i in far_foreground {
                     Self::run_command(i, &mut mode, thread);
                 }
             }
@@ -671,10 +1271,21 @@ impl CommandBuffer {
                 let mut func = function.lock().unwrap();
                 func(&mut guard);
             }
-            DrawCommand::Scissor { children, bounds } => {
+            DrawCommand::Scissor {
+                children,
+                bounds,
+                far_foreground,
+                foreground,
+            } => {
                 let mut mode =
                     handle.begin_scissor_mode(bounds.x, bounds.y, bounds.width, bounds.height);
                 for i in children {
+                    Self::run_command(i, &mut mode, thread);
+                }
+                for i in foreground {
+                    Self::run_command(i, &mut mode, thread);
+                }
+                for i in far_foreground {
                     Self::run_command(i, &mut mode, thread);
                 }
             }
@@ -800,6 +1411,12 @@ impl CommandBuffer {
         for i in &mut cmd.commands {
             Self::run_texture_draw_command(i, &mut mode, thread);
         }
+        for i in &mut cmd.foreground_calls {
+            Self::run_texture_draw_command(i, &mut mode, thread);
+        }
+        for i in &mut cmd.far_foreground_calls {
+            Self::run_texture_draw_command(i, &mut mode, thread);
+        }
     }
 
     pub fn run_texture_draw_command<T>(
@@ -808,11 +1425,21 @@ impl CommandBuffer {
         thread: &RaylibThread,
     ) {
         match cmd {
-            DrawCommand::Shader { shader, commands } => {
+            DrawCommand::Shader {
+                shader,
+                commands,
+                foreground,
+                far_foreground,
+            } => {
                 let mut guard = shader.lock().unwrap();
-
                 let mut mode = handle.begin_shader_mode(&mut guard);
                 for i in commands {
+                    Self::run_texture_draw_command(i, &mut mode, thread);
+                }
+                for i in foreground {
+                    Self::run_texture_draw_command(i, &mut mode, thread);
+                }
+                for i in far_foreground {
                     Self::run_texture_draw_command(i, &mut mode, thread);
                 }
             }
@@ -821,10 +1448,21 @@ impl CommandBuffer {
                 let mut func = function.lock().unwrap();
                 func(&mut guard);
             }
-            DrawCommand::Scissor { children, bounds } => {
+            DrawCommand::Scissor {
+                children,
+                bounds,
+                foreground,
+                far_foreground,
+            } => {
                 let mut mode =
                     handle.begin_scissor_mode(bounds.x, bounds.y, bounds.width, bounds.height);
                 for i in children {
+                    Self::run_texture_draw_command(i, &mut mode, thread);
+                }
+                for i in foreground {
+                    Self::run_texture_draw_command(i, &mut mode, thread);
+                }
+                for i in far_foreground {
                     Self::run_texture_draw_command(i, &mut mode, thread);
                 }
             }
