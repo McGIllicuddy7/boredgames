@@ -6,7 +6,7 @@ use std::{
     net::IpAddr,
     ops::{Deref, DerefMut},
     str::FromStr,
-    sync::{Arc, atomic::AtomicBool},
+    sync::{Arc, Weak, atomic::AtomicBool},
     task::Waker,
     time::Duration,
 };
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
-    sync::Mutex,
+    sync::{Mutex, MutexGuard},
 };
 
 pub struct Stream<T: Serialize + DeserializeOwned> {
@@ -1374,4 +1374,541 @@ macro_rules! try_catch {
             $catch
         }
     }};
+}
+
+pub struct HeapValue<T> {
+    ptr: Option<Arc<tokio::sync::Mutex<T>>>,
+    generation: u64,
+}
+pub struct HeapInner<T> {
+    values: tokio::sync::Mutex<Vec<HeapValue<T>>>,
+}
+
+pub struct HeapRef<T> {
+    parent: Weak<HeapInner<T>>,
+    index: u64,
+    generation: u64,
+}
+impl<T> Clone for HeapRef<T> {
+    fn clone(&self) -> Self {
+        Self {
+            parent: self.parent.clone(),
+            index: self.index,
+            generation: self.generation,
+        }
+    }
+}
+pub struct HeapRefGuard<'a, T> {
+    value: tokio::sync::MutexGuard<'a, T>,
+    _guard: std::cell::UnsafeCell<Option<Arc<Mutex<T>>>>,
+}
+
+impl<'a, T> std::ops::Deref for HeapRefGuard<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        self.value.deref()
+    }
+}
+
+impl<'a, T> std::ops::DerefMut for HeapRefGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.value.deref_mut()
+    }
+}
+
+pub struct Heap<T> {
+    ptr: Arc<HeapInner<T>>,
+}
+impl<T> Heap<T> {
+    pub fn new() -> Self {
+        Self {
+            ptr: Arc::new(HeapInner {
+                values: Mutex::new(Vec::new()),
+            }),
+        }
+    }
+
+    pub async fn alloc(&self, value: T) -> HeapRef<T> {
+        let mut guard = self.ptr.values.lock().await;
+        for i in 0..guard.len() {
+            if guard[i].ptr.is_none() {
+                guard[i].generation = guard[i].generation.wrapping_add(1);
+                guard[i].ptr = Some(Arc::new(Mutex::new(value)));
+                return HeapRef {
+                    parent: Arc::downgrade(&self.ptr),
+                    index: i as u64,
+                    generation: guard[i].generation,
+                };
+            }
+        }
+        let value = HeapValue {
+            ptr: Some(Arc::new(Mutex::new(value))),
+            generation: 1,
+        };
+        let idx = guard.len() as usize;
+        guard.push(value);
+        HeapRef {
+            parent: Arc::downgrade(&self.ptr),
+            index: idx as u64,
+            generation: 1,
+        }
+    }
+
+    pub async fn free(&self, ptr: HeapRef<T>) {
+        let mut g = self.ptr.values.lock().await;
+        if let Some(x) = g.get_mut(ptr.index as usize) {
+            if x.ptr.is_some() && x.generation == ptr.generation {
+                x.ptr = None;
+            }
+        }
+    }
+
+    pub async fn realloc(&self, ptr: &HeapRef<T>, value: T) {
+        let mut g = self.ptr.values.lock().await;
+        if let Some(x) = g.get_mut(ptr.index as usize) {
+            if x.generation == ptr.generation {
+                x.ptr = Some(Arc::new(Mutex::new(value)));
+            }
+        }
+    }
+
+    pub async fn is_valid_ptr(&self, ptr: &HeapRef<T>) -> bool {
+        let mut g = self.ptr.values.lock().await;
+        if let Some(x) = g.get_mut(ptr.index as usize) {
+            if x.generation == ptr.generation {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn downgrade(&self) -> WeakHeap<T> {
+        WeakHeap {
+            ptr: Arc::downgrade(&self.ptr),
+        }
+    }
+
+    pub fn alloc_blocking(&self, value: T) -> HeapRef<T> {
+        let mut guard = self.ptr.values.blocking_lock();
+        for i in 0..guard.len() {
+            if guard[i].ptr.is_none() {
+                guard[i].generation = guard[i].generation.wrapping_add(1);
+                guard[i].ptr = Some(Arc::new(Mutex::new(value)));
+                return HeapRef {
+                    parent: Arc::downgrade(&self.ptr),
+                    index: i as u64,
+                    generation: guard[i].generation,
+                };
+            }
+        }
+        let value = HeapValue {
+            ptr: Some(Arc::new(Mutex::new(value))),
+            generation: 1,
+        };
+        let idx = guard.len() as usize;
+        guard.push(value);
+        HeapRef {
+            parent: Arc::downgrade(&self.ptr),
+            index: idx as u64,
+            generation: 1,
+        }
+    }
+
+    pub fn free_blocking(&self, ptr: HeapRef<T>) {
+        let mut g = self.ptr.values.blocking_lock();
+        if let Some(x) = g.get_mut(ptr.index as usize) {
+            if x.ptr.is_some() && x.generation == ptr.generation {
+                x.ptr = None;
+            }
+        }
+    }
+
+    pub fn realloc_blocking(&self, ptr: &HeapRef<T>, value: T) {
+        let mut g = self.ptr.values.blocking_lock();
+        if let Some(x) = g.get_mut(ptr.index as usize) {
+            if x.generation == ptr.generation {
+                x.ptr = Some(Arc::new(Mutex::new(value)));
+            }
+        }
+    }
+
+    pub fn is_valid_ptr_blocking(&self, ptr: &HeapRef<T>) -> bool {
+        let mut g = self.ptr.values.blocking_lock();
+        if let Some(x) = g.get_mut(ptr.index as usize) {
+            if x.generation == ptr.generation {
+                return true;
+            }
+        }
+        false
+    }
+}
+impl<T> Clone for Heap<T> {
+    fn clone(&self) -> Self {
+        Self {
+            ptr: self.ptr.clone(),
+        }
+    }
+}
+
+impl<T> HeapRef<T> {
+    pub const fn new() -> Self {
+        Self {
+            parent: Weak::new(),
+            index: 0,
+            generation: 0,
+        }
+    }
+
+    pub async fn is_valid(&self) -> bool {
+        let Some(parent) = self.parent.upgrade() else {
+            return false;
+        };
+        let mut g = parent.values.lock().await;
+        if let Some(x) = g.get_mut(self.index as usize) {
+            if x.generation == self.generation {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn get_heap(&self) -> Option<Heap<T>> {
+        Some(Heap {
+            ptr: self.parent.upgrade()?,
+        })
+    }
+    pub async fn try_lock<'a>(&'a mut self) -> Option<HeapRefGuard<'a, T>> {
+        if let Some(x) = self.parent.upgrade() {
+            let v = x.values.lock().await;
+            let g = v.get(self.index as usize)?;
+            if g.generation != self.generation {
+                return None;
+            }
+            let g2 = g.ptr.clone();
+
+            let y = unsafe { std::mem::transmute(g2.as_ref()?.lock().await) };
+            Some(HeapRefGuard {
+                value: y,
+                _guard: std::cell::UnsafeCell::new(g2),
+            })
+        } else {
+            None
+        }
+    }
+
+    pub async fn lock<'a>(&'a mut self) -> HeapRefGuard<'a, T> {
+        self.try_lock().await.unwrap()
+    }
+
+    pub fn try_lock_blocking<'a>(&'a mut self) -> Option<HeapRefGuard<'a, T>> {
+        if let Some(x) = self.parent.upgrade() {
+            let v = x.values.blocking_lock();
+            let g = v.get(self.index as usize)?;
+            if g.generation != self.generation {
+                return None;
+            }
+            let mut g2 = g.ptr.clone();
+            let y = unsafe { std::mem::transmute(g2.as_mut().unwrap().blocking_lock()) };
+            Some(HeapRefGuard {
+                value: y,
+                _guard: std::cell::UnsafeCell::new(g2),
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn lock_blocking<'a>(&'a mut self) -> HeapRefGuard<'a, T> {
+        self.try_lock_blocking().unwrap()
+    }
+}
+
+impl<T> Default for HeapRef<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T> PartialEq for HeapRef<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.generation == other.generation
+            && self.index == other.index
+            && self.parent.ptr_eq(&other.parent)
+    }
+}
+impl<T> Eq for HeapRef<T> {}
+impl<T> Hash for HeapRef<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_usize(self.parent.as_ptr() as usize);
+        state.write_u64(self.index);
+        state.write_u64(self.generation);
+    }
+}
+
+pub struct WeakHeap<T> {
+    ptr: Weak<HeapInner<T>>,
+}
+impl<T> Clone for WeakHeap<T> {
+    fn clone(&self) -> Self {
+        Self {
+            ptr: self.ptr.clone(),
+        }
+    }
+}
+impl<T> WeakHeap<T> {
+    pub fn new() -> Self {
+        Self { ptr: Weak::new() }
+    }
+
+    pub async fn try_alloc(&self, value: T) -> Option<HeapRef<T>> {
+        let heap = self.ptr.upgrade()?;
+        let mut guard = heap.values.lock().await;
+        for i in 0..guard.len() {
+            if guard[i].ptr.is_none() {
+                guard[i].generation = guard[i].generation.wrapping_add(1);
+                guard[i].ptr = Some(Arc::new(Mutex::new(value)));
+                return Some(HeapRef {
+                    parent: self.ptr.clone(),
+                    index: i as u64,
+                    generation: guard[i].generation,
+                });
+            }
+        }
+        let value = HeapValue {
+            ptr: Some(Arc::new(Mutex::new(value))),
+            generation: 1,
+        };
+        let idx = guard.len() as usize;
+        guard.push(value);
+        Some(HeapRef {
+            parent: self.ptr.clone(),
+            index: idx as u64,
+            generation: 1,
+        })
+    }
+
+    pub async fn try_free(&self, ptr: HeapRef<T>) -> Option<()> {
+        let heap = self.ptr.upgrade()?;
+        let mut g = heap.values.lock().await;
+        if let Some(x) = g.get_mut(ptr.index as usize) {
+            if x.ptr.is_some() && x.generation == ptr.generation {
+                x.ptr = None;
+            }
+        }
+        Some(())
+    }
+
+    pub async fn try_realloc(&self, ptr: &HeapRef<T>, value: T) -> Option<()> {
+        let heap = self.ptr.upgrade()?;
+        let mut g = heap.values.lock().await;
+        if let Some(x) = g.get_mut(ptr.index as usize) {
+            if x.generation == ptr.generation {
+                x.ptr = Some(Arc::new(Mutex::new(value)));
+            }
+        }
+        Some(())
+    }
+
+    pub async fn is_valid_ptr(&self, ptr: &HeapRef<T>) -> bool {
+        let Some(heap) = self.ptr.upgrade() else {
+            return false;
+        };
+        let mut g = heap.values.lock().await;
+        if let Some(x) = g.get_mut(ptr.index as usize) {
+            if x.generation == ptr.generation {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub async fn alloc(&self, value: T) -> HeapRef<T> {
+        self.try_alloc(value).await.unwrap()
+    }
+
+    pub async fn free(&self, ptr: HeapRef<T>) {
+        let _ = self.try_free(ptr).await;
+    }
+
+    pub async fn realloc(&self, ptr: &HeapRef<T>, value: T) {
+        let _ = self.try_realloc(ptr, value).await;
+    }
+
+    pub fn upgrade(&self) -> Option<Heap<T>> {
+        Some(Heap {
+            ptr: self.ptr.upgrade()?,
+        })
+    }
+
+    pub fn try_alloc_blocking(&self, value: T) -> Option<HeapRef<T>> {
+        let heap = self.ptr.upgrade()?;
+        let mut guard = heap.values.blocking_lock();
+        for i in 0..guard.len() {
+            if guard[i].ptr.is_none() {
+                guard[i].generation = guard[i].generation.wrapping_add(1);
+                guard[i].ptr = Some(Arc::new(Mutex::new(value)));
+                return Some(HeapRef {
+                    parent: self.ptr.clone(),
+                    index: i as u64,
+                    generation: guard[i].generation,
+                });
+            }
+        }
+        let value = HeapValue {
+            ptr: Some(Arc::new(Mutex::new(value))),
+            generation: 1,
+        };
+        let idx = guard.len() as usize;
+        guard.push(value);
+        Some(HeapRef {
+            parent: self.ptr.clone(),
+            index: idx as u64,
+            generation: 1,
+        })
+    }
+
+    pub fn try_free_blocking(&self, ptr: HeapRef<T>) -> Option<()> {
+        let heap = self.ptr.upgrade()?;
+        let mut g = heap.values.blocking_lock();
+        if let Some(x) = g.get_mut(ptr.index as usize) {
+            if x.ptr.is_some() && x.generation == ptr.generation {
+                x.ptr = None;
+            }
+        }
+        Some(())
+    }
+
+    pub fn try_realloc_blocking(&self, ptr: &HeapRef<T>, value: T) -> Option<()> {
+        let heap = self.ptr.upgrade()?;
+        let mut g = heap.values.blocking_lock();
+        if let Some(x) = g.get_mut(ptr.index as usize) {
+            if x.generation == ptr.generation {
+                x.ptr = Some(Arc::new(Mutex::new(value)));
+            }
+        }
+        Some(())
+    }
+
+    pub fn is_valid_ptr_blocking(&self, ptr: &HeapRef<T>) -> bool {
+        let Some(heap) = self.ptr.upgrade() else {
+            return false;
+        };
+        let mut g = heap.values.blocking_lock();
+        if let Some(x) = g.get_mut(ptr.index as usize) {
+            if x.generation == ptr.generation {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn alloc_blocking(&self, value: T) -> HeapRef<T> {
+        self.try_alloc_blocking(value).unwrap()
+    }
+
+    pub fn free_blocking(&self, ptr: HeapRef<T>) {
+        let _ = self.try_free_blocking(ptr);
+    }
+
+    pub fn realloc_blocking(&self, ptr: &HeapRef<T>, value: T) {
+        let _ = self.try_realloc_blocking(ptr, value);
+    }
+}
+
+pub struct StaticHeap<T> {
+    inner: tokio::sync::Mutex<Option<Heap<T>>>,
+}
+impl<T> StaticHeap<T> {
+    pub const fn new() -> Self {
+        Self {
+            inner: tokio::sync::Mutex::const_new(None),
+        }
+    }
+
+    pub async fn get(&'static self) -> MutexGuard<'static, Option<Heap<T>>> {
+        let mut tmp = self.inner.lock().await;
+        if tmp.is_none() {
+            *tmp = Some(Heap::new())
+        }
+        tmp
+    }
+
+    pub fn get_blocking(&'static self) -> MutexGuard<'static, Option<Heap<T>>> {
+        let mut tmp = self.inner.blocking_lock();
+        if tmp.is_none() {
+            *tmp = Some(Heap::new())
+        }
+        tmp
+    }
+
+    pub async fn alloc(&'static self, value: T) -> HeapRef<T> {
+        self.get().await.as_mut().unwrap().alloc(value).await
+    }
+
+    pub async fn free(&'static self, ptr: HeapRef<T>) {
+        self.get().await.as_mut().unwrap().free(ptr).await
+    }
+
+    pub async fn realloc(&'static self, ptr: &HeapRef<T>, value: T) {
+        self.get().await.as_mut().unwrap().realloc(ptr, value).await
+    }
+
+    pub async fn is_valid_ptr(&'static self, ptr: &HeapRef<T>) -> bool {
+        self.get().await.as_mut().unwrap().is_valid_ptr(ptr).await
+    }
+
+    pub fn downgrade(&'static self) -> WeakHeap<T> {
+        self.get_blocking().as_mut().unwrap().downgrade()
+    }
+
+    pub fn as_heap(&'static self) -> Heap<T> {
+        self.get_blocking().as_mut().unwrap().clone()
+    }
+    pub fn alloc_blocking(&'static self, value: T) -> HeapRef<T> {
+        self.get_blocking().as_mut().unwrap().alloc_blocking(value)
+    }
+
+    pub fn free_blocking(&'static self, ptr: HeapRef<T>) {
+        self.get_blocking().as_mut().unwrap().free_blocking(ptr)
+    }
+
+    pub fn realloc_blocking(&'static self, ptr: &HeapRef<T>, value: T) {
+        self.get_blocking()
+            .as_mut()
+            .unwrap()
+            .realloc_blocking(ptr, value);
+    }
+
+    pub fn is_valid_ptr_blocking(&'static self, ptr: &HeapRef<T>) -> bool {
+        self.get_blocking()
+            .as_mut()
+            .unwrap()
+            .is_valid_ptr_blocking(ptr)
+    }
+}
+
+pub struct HeapIterator<'a, T> {
+    idx: usize,
+    rf: &'a Arc<HeapInner<T>>,
+}
+impl<'a, T> Iterator for HeapIterator<'a, T> {
+    type Item = HeapRef<T>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let guard = self.rf.values.blocking_lock();
+        while self.idx < guard.len() {
+            if guard[self.idx].ptr.is_some() {
+                let v = guard[self.idx].generation;
+                let out = HeapRef {
+                    parent: Arc::downgrade(&self.rf),
+                    index: self.idx as u64,
+                    generation: v,
+                };
+                self.idx += 1;
+                return Some(out);
+            } else {
+                self.idx += 1;
+            }
+        }
+        None
+    }
 }

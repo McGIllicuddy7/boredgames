@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+async-trait = "0.1.89"
 hardware-id = "0.3.0"
 libc = "0.2.186"
 local-ip-address = "0.6.12"
