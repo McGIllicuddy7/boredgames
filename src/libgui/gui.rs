@@ -17,6 +17,8 @@ use raylib::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::engine::Col;
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Point {
     pub x: i32,
@@ -124,6 +126,11 @@ pub enum DrawCommand {
     DrawPoints {
         points: Vec<Point>,
         radii: f32,
+        color: Color,
+    },
+    DrawPixel {
+        x: i32,
+        y: i32,
         color: Color,
     },
 }
@@ -242,6 +249,10 @@ impl DrawCommand {
                     i.x += point.x;
                     i.y += point.y;
                 }
+            }
+            DrawCommand::DrawPixel { x, y, color: _ } => {
+                *x += point.x;
+                *y += point.y;
             }
         }
     }
@@ -365,6 +376,10 @@ impl DrawCommand {
                     i.x = (i.x as f32 * scale_x) as i32;
                     i.y = (i.y as f32 * scale_y) as i32;
                 }
+            }
+            DrawCommand::DrawPixel { x, y, color: _ } => {
+                (*x) = (*x as f32 * scale_x) as i32;
+                (*y) = (*y as f32 * scale_y) as i32;
             }
         }
     }
@@ -1200,6 +1215,17 @@ impl CommandBufferBuilder {
         self.foreground_calls.push(cmd);
         out
     }
+    pub fn draw_pixel(&mut self, x: i32, y: i32, color: Color) {
+        self.values.push(DrawCommand::DrawPixel { x, y, color });
+    }
+    pub fn draw_pixel_foreground(&mut self, x: i32, y: i32, color: Color) {
+        self.foreground_calls
+            .push(DrawCommand::DrawPixel { x, y, color });
+    }
+    pub fn draw_pixel_far_foreground(&mut self, x: i32, y: i32, color: Color) {
+        self.far_foreground_calls
+            .push(DrawCommand::DrawPixel { x, y, color });
+    }
 }
 
 impl CommandBuffer {
@@ -1207,10 +1233,22 @@ impl CommandBuffer {
         for i in &mut self.calls {
             i.set_origin(point);
         }
+        for i in &mut self.foreground_calls {
+            i.set_origin(point);
+        }
+        for i in &mut self.far_foreground_calls {
+            i.set_origin(point);
+        }
     }
 
     pub fn set_scale(&mut self, scale_x: f32, scale_y: f32) {
         for i in &mut self.calls {
+            i.set_scale(scale_x, scale_y);
+        }
+        for i in &mut self.foreground_calls {
+            i.set_scale(scale_x, scale_y);
+        }
+        for i in &mut self.far_foreground_calls {
             i.set_scale(scale_x, scale_y);
         }
     }
@@ -1398,6 +1436,9 @@ impl CommandBuffer {
                     handle.draw_circle(i.x, i.y, *radii, *color);
                 }
             }
+            DrawCommand::DrawPixel { x, y, color } => {
+                handle.draw_pixel(*x, *y, *color);
+            }
         }
     }
 
@@ -1574,6 +1615,10 @@ impl CommandBuffer {
                 for i in points {
                     handle.draw_circle(i.x, i.y, *radii, *color);
                 }
+            }
+            DrawCommand::DrawPixel { x, y, color } => {
+                println!("drawing:{x}, {y}");
+                handle.draw_pixel(*x, *y, *color);
             }
         }
     }

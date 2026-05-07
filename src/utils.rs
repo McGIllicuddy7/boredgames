@@ -1912,3 +1912,23 @@ impl<'a, T> Iterator for HeapIterator<'a, T> {
         None
     }
 }
+impl<'a, T> HeapIterator<'a, T> {
+    pub async fn next_async(&mut self) -> Option<HeapRef<T>> {
+        let guard = self.rf.values.lock().await;
+        while self.idx < guard.len() {
+            if guard[self.idx].ptr.is_some() {
+                let v = guard[self.idx].generation;
+                let out = HeapRef {
+                    parent: Arc::downgrade(&self.rf),
+                    index: self.idx as u64,
+                    generation: v,
+                };
+                self.idx += 1;
+                return Some(out);
+            } else {
+                self.idx += 1;
+            }
+        }
+        None
+    }
+}
