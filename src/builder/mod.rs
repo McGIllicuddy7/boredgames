@@ -406,8 +406,7 @@ impl DrawingState {
                                     let mouse_pos = {
                                         let mouse_pos = handle.get_mouse_position();
                                         //  let rat = bounds.width as f32 / (1024.);
-                                        let rat = (bounds.width as f32 * 1.05)
-                                            / (handle.get_screen_width() as f32);
+                                        let rat = (961.) / (handle.get_screen_width() as f32);
                                         let start_x = bounds.x;
                                         let start_y = bounds.y;
                                         let dx = mouse_pos.x - start_x as f32;
