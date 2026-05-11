@@ -508,9 +508,9 @@ pub fn try_generate_room(
 ) -> Option<Room> {
     let mut lc = 0;
     for i in &floor.rooms {
-        if (i.max_x - i.min_x).abs() >= 15 || (i.max_y - i.min_y).abs() >= 15 {
+        if (i.max_x - i.min_x).abs() >= 10 || (i.max_y - i.min_y).abs() >= 10 {
             let mut dist = 100000000;
-            for dx in 0..30 {
+            for dx in -15..=15 {
                 for y in i.min_y..=i.max_y {
                     for x in i.min_x..=i.max_x {
                         let d = ((point.x + dx - x) * (point.x + dx - x)
@@ -521,7 +521,7 @@ pub fn try_generate_room(
                     }
                 }
             }
-            for dy in 0..30 {
+            for dy in -15..=15 {
                 for y in i.min_y..=i.max_y {
                     for x in i.min_x..=i.max_x {
                         let d = ((point.x - x) * (point.x - x)
@@ -532,7 +532,7 @@ pub fn try_generate_room(
                     }
                 }
             }
-            if dist < 256 {
+            if dist < 25 {
                 lc += 1;
             }
         }
@@ -547,6 +547,7 @@ pub fn try_generate_room(
         };
         bases.reserve(120);
         if lc < 1 {
+            bases.clear();
             for k in 2..=2 as i32 {
                 for j in 10..=30 {
                     bases.push((k, j));
