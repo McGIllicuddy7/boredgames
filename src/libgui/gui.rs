@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::engine::Col;
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Point {
     pub x: i32,
     pub y: i32,

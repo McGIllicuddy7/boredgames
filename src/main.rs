@@ -22,8 +22,8 @@ pub async fn main() {
         .build();
     handle.set_exit_key(None);
     builder::game_loop(&mut handle, &thread, None).await;*/
-    let mut g = generate_ground_floor(40, 40);
-    post_process_floor(&mut g, 15, 15, true);
+    let mut g = generate_ground_floor(64, 64);
+    post_process_floor(&mut g, 32, 32, true);
     println!("{}", g.rooms.len());
-    g.render_debug("test.png");
+    g.render("test.png");
 }

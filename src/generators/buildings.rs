@@ -1,13 +1,17 @@
+use std::collections::HashSet;
+
+use libc::rand;
 use rand::{random, seq::SliceRandom};
 use raylib::{color::Color, math::Rectangle, texture::Image};
-use serde::de::value;
+use serde::de::{self, value};
 
 use crate::libgui::{Bounds, Point, Widget};
 pub const UP: usize = 0;
 pub const DOWN: usize = 1;
 pub const LEFT: usize = 2;
 pub const RIGHT: usize = 3;
-#[derive(Clone, Debug, Copy)]
+pub const DIRECTIONS: [(i32, i32); 4] = [(0, -1), (0, 1), (-1, 0), (0, 1)];
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub enum SideKind {
     Wall,
     Door,
@@ -139,8 +143,8 @@ impl Floor {
             }
             out.draw_rectangle_lines(
                 Rectangle {
-                    x: min_x as f32 * 10. - 10.,
-                    y: min_y as f32 * 10. - 10.,
+                    x: min_x as f32 * 10.,
+                    y: min_y as f32 * 10.,
                     width: (max_x - min_x + 1) as f32 * 10.,
                     height: (max_y - min_y + 1) as f32 * 10.,
                 },
@@ -157,12 +161,87 @@ impl Floor {
         }
         out.export_image(name);
     }
+
+    pub fn render(&self, name: &str) {
+        let mut out = Image::gen_image_color(self.width() * 10, self.height() * 10, Color::BLACK);
+        for y in 0..self.height() {
+            for x in 0..self.width() {
+                let p = self.get(x, y);
+                if p.is_wall {
+                    out.draw_rectangle(x * 10, y * 10, 10, 10, Color::BLACK);
+                } else if p.is_occupied {
+                    out.draw_rectangle(x * 10, y * 10, 10, 10, Color::WHITE);
+                } else {
+                    out.draw_rectangle(x * 10, y * 10, 10, 10, Color::GRAY);
+                }
+            }
+        }
+        for y in 0..self.height() {
+            for x in 0..self.width() {
+                let p = self.get(x, y);
+                let points = [
+                    (
+                        Point {
+                            x: x * 10,
+                            y: y * 10,
+                        },
+                        Point {
+                            x: (x + 1) * 10,
+                            y: y * 10,
+                        },
+                    ),
+                    (
+                        Point {
+                            x: x * 10,
+                            y: (y + 1) * 10,
+                        },
+                        Point {
+                            x: (x + 1) * 10,
+                            y: (y + 1) * 10,
+                        },
+                    ),
+                    (
+                        Point {
+                            x: x * 10,
+                            y: y * 10,
+                        },
+                        Point {
+                            x: x * 10,
+                            y: (y + 1) * 10,
+                        },
+                    ),
+                    (
+                        Point {
+                            x: (x + 1) * 10,
+                            y: y * 10,
+                        },
+                        Point {
+                            x: (x + 1) * 10,
+                            y: (y + 1) * 10,
+                        },
+                    ),
+                ];
+                for i in 0..4 {
+                    if p.sides[i] == SideKind::Wall {
+                        let s = points[i].0;
+                        let e = points[i].1;
+                        out.draw_line(s.x, s.y, e.x, e.y, Color::BLACK);
+                    }
+                }
+            }
+        }
+        out.export_image(name);
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct Room {
     pub points: Vec<Point>,
     pub boundary_positions: Vec<Point>,
+    pub min_x: i32,
+    pub max_x: i32,
+    pub min_y: i32,
+    pub max_y: i32,
 }
 
 pub fn generate_ground_floor(width: i32, height: i32) -> Floor {
@@ -206,6 +285,9 @@ pub fn post_process_floor(floor: &mut Floor, width: i32, height: i32, circular: 
                 for j in &t.points {
                     floor.get_mut(j.x, j.y).is_occupied = false;
                     floor.get_mut(j.x, j.y).sides = [SideKind::Empty; 4];
+                    for k in &mut floor.rooms {
+                        k.boundary_positions.retain(|i| *i != *j);
+                    }
                 }
                 continue 'outer;
             };
@@ -227,13 +309,13 @@ pub fn post_process_floor(floor: &mut Floor, width: i32, height: i32, circular: 
                         }
                         if let Some(t) = floor.get_checked(j + dx, i + dy) {
                             if t.is_occupied && !t.is_wall {
-                                count += 2;
+                                count += 4;
                             } else if t.is_occupied {
-                                count += 1;
+                                count += 2;
                             }
                         }
                     }
-                    if count >= 4 {
+                    if count >= 16 {
                         floor.get_mut(j, i).is_occupied = true;
                         floor.get_mut(j, i).is_wall = true;
                         updated = true;
@@ -241,11 +323,164 @@ pub fn post_process_floor(floor: &mut Floor, width: i32, height: i32, circular: 
                 }
             }
         }
-        println!("{}", updated);
         if !updated {
             break 'outer;
         }
     }
+    let old = floor.clone();
+    let mut connected_set = HashSet::new();
+    if floor.rooms.len() == 0 {
+        return;
+    }
+    let mut base_list: Vec<usize> = (0..floor.rooms.len()).collect();
+    let l = base_list.len();
+    for _ in 0..4 {
+        for i in 0..l {
+            base_list.push(base_list[i]);
+        }
+    }
+    let start = base_list.remove((random::<u64>() as usize) % base_list.len());
+    connected_set.insert(start);
+    let mut no_progress_count = 0;
+    let mut red_count = vec![0; floor.rooms.len()];
+    let mut best = old.clone();
+    let mut best_count = 0;
+    let mut best_connections = HashSet::new();
+    'outer: loop {
+        if no_progress_count > 4 {
+            no_progress_count = 0;
+            if base_list.is_empty() {
+                *floor = best;
+                println!("no valid base");
+                connected_set = best_connections.clone();
+                break 'outer;
+            }
+            for j in &mut red_count {
+                *j = 0;
+            }
+            if connected_set.len() > best_count {
+                best_count = connected_set.len();
+                best_connections = connected_set.clone();
+                best = floor.clone();
+            }
+            *floor = old.clone();
+            let start = base_list.remove((random::<u64>() as usize) % base_list.len());
+            connected_set.clear();
+            connected_set.insert(start);
+        }
+        let mut progressed = false;
+        let mut v: Vec<usize> = (0..floor.rooms.len()).collect();
+        v.shuffle(&mut rand::rng());
+        for j in v {
+            if connected_set.contains(&j) {
+                let mc = if (floor.rooms[j].max_x - floor.rooms[j].min_x).abs() > 10
+                    || (floor.rooms[j].max_y - floor.rooms[j].min_y).abs() > 10
+                {
+                    20
+                } else {
+                    4
+                };
+                if red_count[j] > mc {
+                    continue;
+                }
+                red_count[j] += 1;
+            }
+            let mut points = Vec::new();
+            let v = &floor.rooms[j];
+            let delt = if no_progress_count > 1 { -1 } else { 1 };
+            for i in v.min_x + delt..=v.max_x - delt {
+                points.push(Point {
+                    x: i,
+                    y: v.min_y - 1,
+                });
+            }
+            for i in v.min_x + delt..=v.max_x - delt {
+                points.push(Point {
+                    x: i,
+                    y: v.max_y + 1,
+                });
+            }
+            for i in v.min_y + delt..=v.max_y - delt {
+                points.push(Point {
+                    x: v.min_x - 1,
+                    y: i,
+                });
+            }
+            for i in v.min_y + delt..=v.max_y - delt {
+                points.push(Point {
+                    x: v.max_x + 1,
+                    y: i,
+                });
+            }
+            points.shuffle(&mut rand::rng());
+            'k: for k in 0..floor.rooms.len() {
+                if connected_set.contains(&k) {
+                    let mc = if (floor.rooms[k].max_x - floor.rooms[k].min_x).abs() > 10
+                        || (floor.rooms[k].max_y - floor.rooms[k].min_y).abs() > 10
+                    {
+                        20
+                    } else {
+                        2
+                    };
+                    let mc1 = if (floor.rooms[j].max_x - floor.rooms[j].min_x).abs() > 10
+                        || (floor.rooms[j].max_y - floor.rooms[j].min_y).abs() > 10
+                    {
+                        20
+                    } else {
+                        2
+                    };
+                    if red_count[k] > mc && red_count[j] > mc1 {
+                        continue;
+                    }
+                    red_count[k] += 1;
+                    let mut mutual = None;
+                    for i in &points {
+                        if floor.rooms[k].points.contains(i) {
+                            mutual = Some(*i);
+                            break;
+                        }
+                    }
+                    if let Some(m) = mutual {
+                        for i in 0..4 {
+                            let p2 = Point {
+                                x: m.x + DIRECTIONS[i].0,
+                                y: m.y + DIRECTIONS[i].1,
+                            };
+                            if floor.rooms[j].points.contains(&p2) {
+                                floor.get_mut(m.x, m.y).sides[i] = SideKind::Door;
+                                let s2 = if i == UP {
+                                    DOWN
+                                } else if i == DOWN {
+                                    UP
+                                } else if i == LEFT {
+                                    RIGHT
+                                } else {
+                                    LEFT
+                                };
+                                floor.get_mut(m.x, m.y).sides[i] = SideKind::Door;
+                                floor.get_mut(p2.x, p2.y).sides[s2] = SideKind::Door;
+                                connected_set.insert(j);
+                                progressed = true;
+                                no_progress_count = 0;
+                                break 'k;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if connected_set.len() == floor.rooms.len() {
+            break;
+        }
+        if !progressed {
+            no_progress_count += 1;
+        }
+    }
+    println!(
+        "connected len:{} rooms len:{}, base:{start}",
+        connected_set.len(),
+        floor.rooms.len()
+    );
 }
 
 pub fn generate_room(floor: &mut Floor, previous: &Floor, has_another_room: bool) -> Option<Room> {
@@ -280,7 +515,19 @@ pub fn generate_room(floor: &mut Floor, previous: &Floor, has_another_room: bool
     for i in &v.points {
         floor.get_mut(i.x, i.y).is_occupied = true;
     }
-    return Some(v);
+    for i in v.min_x..=v.max_x {
+        floor.get_mut(i, v.min_y).sides[UP] = SideKind::Wall;
+    }
+    for i in v.min_x..=v.max_x {
+        floor.get_mut(i, v.max_y).sides[DOWN] = SideKind::Wall;
+    }
+    for i in v.min_y..=v.max_y {
+        floor.get_mut(v.min_x, i).sides[LEFT] = SideKind::Wall;
+    }
+    for i in v.min_y..=v.max_y {
+        floor.get_mut(v.max_x, i).sides[RIGHT] = SideKind::Wall;
+    }
+    Some(v)
 }
 
 pub fn try_generate_room(
@@ -292,11 +539,28 @@ pub fn try_generate_room(
     let mut values = Vec::new();
     let mut first = true;
     'gt: loop {
-        let mut bases: Vec<(i32, i32)> = if first {
-            (5..11).flat_map(|h| (5..11).map(move |w| (w, h))).collect()
+        let mut bases: Vec<(i32, i32)> = if has_another_room {
+            if first {
+                (5..10).flat_map(|h| (5..10).map(move |w| (w, h))).collect()
+            } else {
+                (3..8).flat_map(|h| (3..8).map(move |w| (w, h))).collect()
+            }
         } else {
-            (3..8).flat_map(|h| (3..8).map(move |w| (w, h))).collect()
+            Vec::new()
         };
+        if (!has_another_room || (floor.rooms.len() % 32 == 0 && (random::<u32>() % 1000 < 40)))
+            && ((point.x - floor.width() / 2) * (point.x - floor.width() / 2)
+                + (point.y - floor.height() / 2) * (point.y - floor.height() / 2))
+                .isqrt()
+                < 40
+        {
+            for k in 2..=3 {
+                for j in 15..40 {
+                    bases.push((k, j));
+                    bases.push((j, k));
+                }
+            }
+        }
         bases.shuffle(&mut rand::rng());
         let bases = bases;
         'outer: for (width, height) in bases {
@@ -307,7 +571,7 @@ pub fn try_generate_room(
                     height as f32 / width as f32
                 }
             };
-            if ratio > 2. && ratio < 3. {
+            if ratio > 1.5 && ratio < 3. {
                 continue;
             }
             let mut points = Vec::new();
@@ -373,6 +637,10 @@ pub fn try_generate_room(
                 continue 'outer;
             }
             values.push(Room {
+                min_y: point.y,
+                min_x: point.x,
+                max_x: point.x + width - 1,
+                max_y: point.y + height - 1,
                 points,
                 boundary_positions: border_positions,
             });
