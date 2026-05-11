@@ -2529,7 +2529,7 @@ impl<'a, State> HorizontalContainerBuilder<'a, State> {
         let x0 = self.bounds.x + self.padding + self.bounds.width;
         let y0 = self.bounds.y + self.padding;
         let ratio = image.width() as f32 / image.height() as f32;
-        let height = ((w - self.padding * 2) as f32 * ratio) as i32;
+        let height = ((w - self.padding * 2) as f32 / ratio) as i32;
         if height > self.bounds.height {
             self.bounds.height = height;
         }
@@ -2955,7 +2955,7 @@ impl<'a, State> ContainerBuilder<'a, State> {
         let x0 = self.bounds.x + self.padding;
         let y0 = self.bounds.y + self.bounds.height + self.padding;
         let ratio = image.width() as f32 / image.height() as f32;
-        let height = ((w - self.padding * 2) as f32 * ratio) as i32;
+        let height = ((w - self.padding * 2) as f32 / ratio) as i32;
         self.bounds.height += height + self.padding * 3;
         let b = Widget::Button {
             style: self.style,
@@ -3319,7 +3319,7 @@ impl<'a, State> ScrollBoxContainerBuilder<'a, State> {
         let x0 = self.bounds.x + self.padding;
         let y0 = self.bounds.y + self.displacement + self.padding;
         let ratio = image.width() as f32 / image.height() as f32;
-        let height = ((w - self.padding * 2) as f32 * ratio) as i32;
+        let height = ((w - self.padding * 2) as f32 / ratio) as i32;
         self.displacement += height + self.padding * 2;
         let b = Widget::Button {
             style: self.style,
