@@ -490,7 +490,7 @@ pub fn generate_room(floor: &mut Floor, previous: &Floor, has_another_room: bool
     let mut r = Vec::new();
     let mut fs = 0;
     while !points.is_empty() {
-        if fs > 10 {
+        if fs > 16 {
             break;
         }
         let _idx = (random::<u64>() as usize) % points.len();
