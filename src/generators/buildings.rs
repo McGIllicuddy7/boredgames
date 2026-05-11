@@ -1,8 +1,9 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, os::macos::raw::stat};
 
 use libc::rand;
 use rand::{random, seq::SliceRandom};
 use raylib::{color::Color, math::Rectangle, texture::Image};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use serde::de::{self, value};
 
 use crate::libgui::{Bounds, Point, Widget};
@@ -242,6 +243,7 @@ pub struct Room {
     pub max_x: i32,
     pub min_y: i32,
     pub max_y: i32,
+    pub connections: Vec<usize>,
 }
 
 pub fn generate_ground_floor(width: i32, height: i32) -> Floor {
@@ -416,18 +418,255 @@ pub fn post_process_floor(floor: &mut Floor, width: i32, height: i32, circular: 
             break 'outer;
         }
     }
-    let old = floor.clone();
-    let mut connected_set = HashSet::new();
     if floor.rooms.len() == 0 {
         return;
     }
-    let mut base_list: Vec<usize> = (0..floor.rooms.len()).collect();
-    let l = base_list.len();
-    for _ in 0..8 {
-        for i in 0..l {
-            base_list.push(base_list[i]);
+    connect_rooms(floor);
+}
+
+pub fn generate_room(floor: &mut Floor, previous: &Floor, has_another_room: bool) -> Option<Room> {
+    let mut points = if has_another_room {
+        let mut x = HashSet::new();
+        let mut r = Vec::new();
+        for j in &floor.rooms {
+            for k in j.get_boundary_points() {
+                for dy in -5..=5 {
+                    for dx in -5..=5 {
+                        let p = Point {
+                            x: k.x + dx,
+                            y: k.y + dy,
+                        };
+                        if let Some(t) = floor.get_checked(p.x, p.y) {
+                            if !t.is_occupied {
+                                x.insert(p);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        r.reserve(x.len());
+        for i in x {
+            r.push(i);
+        }
+        r
+    } else {
+        (0..floor.height())
+            .flat_map(|y| (0..floor.width()).map(move |x| Point { x, y }))
+            .collect()
+    };
+
+    points.shuffle(&mut rand::rng());
+    let l = points.len().isqrt() * 4;
+    let mut r: Vec<Room> = (0..l)
+        .into_par_iter()
+        .flat_map(|i| {
+            for i in i..i + 1 {
+                let v = *points.get(i)?;
+                if let Some(room) = try_generate_room(v, floor, previous, has_another_room) {
+                    return Some(room);
+                }
+            }
+            return None;
+        })
+        .collect();
+    if r.is_empty() {
+        return None;
+    }
+    let mut idx = 0;
+    let mut max_count = 0;
+    for i in 0..r.len() {
+        if r[i].boundary_positions.len() > max_count {
+            idx = i;
+            max_count = r[i].boundary_positions.len();
         }
     }
+    let v = r.remove(idx);
+    for i in &v.points {
+        floor.get_mut(i.x, i.y).is_occupied = true;
+    }
+    for i in v.min_x..=v.max_x {
+        floor.get_mut(i, v.min_y).sides[UP] = SideKind::Wall;
+    }
+    for i in v.min_x..=v.max_x {
+        floor.get_mut(i, v.max_y).sides[DOWN] = SideKind::Wall;
+    }
+    for i in v.min_y..=v.max_y {
+        floor.get_mut(v.min_x, i).sides[LEFT] = SideKind::Wall;
+    }
+    for i in v.min_y..=v.max_y {
+        floor.get_mut(v.max_x, i).sides[RIGHT] = SideKind::Wall;
+    }
+    Some(v)
+}
+
+pub fn try_generate_room(
+    point: Point,
+    floor: &Floor,
+    previous: &Floor,
+    has_another_room: bool,
+) -> Option<Room> {
+    let mut lc = 0;
+    for i in &floor.rooms {
+        if (i.max_x - i.min_x).abs() >= 15 || (i.max_y - i.min_y).abs() >= 15 {
+            let mut dist = 100000000;
+            for dx in 0..30 {
+                for y in i.min_y..=i.max_y {
+                    for x in i.min_x..=i.max_x {
+                        let d = ((point.x + dx - x) * (point.x + dx - x)
+                            + (point.y - y) * (point.y - y));
+                        if d < dist {
+                            dist = d;
+                        }
+                    }
+                }
+            }
+            for dy in 0..30 {
+                for y in i.min_y..=i.max_y {
+                    for x in i.min_x..=i.max_x {
+                        let d = ((point.x - x) * (point.x - x)
+                            + (point.y + dy - y) * (point.y + dy - y));
+                        if d < dist {
+                            dist = d;
+                        }
+                    }
+                }
+            }
+            if dist < 256 {
+                lc += 1;
+            }
+        }
+    }
+    let mut values = Vec::new();
+    let mut first = true;
+    'gt: loop {
+        let mut bases: Vec<(i32, i32)> = if first {
+            (5..10).flat_map(|h| (5..10).map(move |w| (w, h))).collect()
+        } else {
+            (3..8).flat_map(|h| (3..8).map(move |w| (w, h))).collect()
+        };
+        bases.reserve(120);
+        if lc < 1 {
+            for k in 2..=2 as i32 {
+                for j in 10..=30 {
+                    bases.push((k, j));
+                    bases.push((j, k));
+                }
+            }
+        }
+        bases.shuffle(&mut rand::rng());
+        let bases = bases;
+        'outer: for (width, height) in bases {
+            let ratio = {
+                if width > height {
+                    width as f32 / height as f32
+                } else {
+                    height as f32 / width as f32
+                }
+            };
+            if ratio > 1.5 && ratio < 5. {
+                continue;
+            }
+            let mut points = Vec::new();
+            for dy in point.y..point.y + height {
+                for dx in point.x..point.x + width {
+                    if let Some(tmp) = previous.get_checked(dx, dy) {
+                        if !tmp.is_occupied {
+                            continue 'outer;
+                        }
+                    } else {
+                        continue 'outer;
+                    }
+                    if let Some(tmp) = floor.get_checked(dx, dy) {
+                        if tmp.is_occupied {
+                            continue 'outer;
+                        }
+                    } else {
+                        continue 'outer;
+                    }
+                    points.push(Point { x: dx, y: dy });
+                }
+            }
+            let points = points;
+            let mut hit_other_count = 0;
+            let mut border_positions = Vec::new();
+            let x_pos = point.x - 1;
+            for dy in point.y..point.y + height {
+                if let Some(t) = floor.get_checked(x_pos, dy) {
+                    if t.is_occupied {
+                        hit_other_count += 1;
+                        border_positions.push(Point { x: x_pos, y: dy })
+                    }
+                }
+            }
+            let x_pos = point.x + width;
+            for dy in point.y..point.y + height {
+                if let Some(t) = floor.get_checked(x_pos, dy) {
+                    if t.is_occupied {
+                        hit_other_count += 1;
+                        border_positions.push(Point { x: x_pos, y: dy })
+                    }
+                }
+            }
+            let y_pos = point.y - 1;
+            for dx in point.x..point.x + width {
+                if let Some(t) = floor.get_checked(dx, y_pos) {
+                    if t.is_occupied {
+                        hit_other_count += 1;
+                        border_positions.push(Point { x: dx, y: y_pos })
+                    }
+                }
+            }
+            let y_pos = point.y + height;
+            for dx in point.x..point.x + width {
+                if let Some(t) = floor.get_checked(dx, y_pos) {
+                    if t.is_occupied {
+                        hit_other_count += 1;
+                        border_positions.push(Point { x: dx, y: y_pos })
+                    }
+                }
+            }
+            if (hit_other_count < 5) && has_another_room {
+                continue 'outer;
+            }
+            values.push(Room {
+                min_y: point.y,
+                min_x: point.x,
+                max_x: point.x + width - 1,
+                max_y: point.y + height - 1,
+                points,
+                boundary_positions: border_positions,
+                connections: Vec::new(),
+            });
+        }
+        if values.len() != 0 {
+            break 'gt;
+        } else if first {
+            first = false;
+        } else {
+            break 'gt;
+        }
+    }
+    if values.is_empty() {
+        return None;
+    }
+    let mut max_count = 0;
+    let mut max_idx = 0;
+    for i in 0..values.len() {
+        let offset = (random::<u64>() as usize) % 4;
+        if values[i].points.len() + offset > max_count {
+            max_count = values[i].boundary_positions.len() + offset;
+            max_idx = i;
+        }
+    }
+    let v = values.remove(max_idx);
+    Some(v)
+}
+
+pub fn connect_rooms_old(floor: &mut Floor) {
+    let old = floor.clone();
+    let mut connected_set = HashSet::new();
+    let mut base_list: Vec<usize> = (0..floor.rooms.len()).collect();
     let start = base_list.remove((random::<u64>() as usize) % base_list.len());
     connected_set.insert(start);
     let mut no_progress_count = 0;
@@ -589,212 +828,178 @@ pub fn post_process_floor(floor: &mut Floor, width: i32, height: i32, circular: 
     floor.rooms = r2;
 }
 
-pub fn generate_room(floor: &mut Floor, previous: &Floor, has_another_room: bool) -> Option<Room> {
-    let mut points: Vec<Point> = (0..floor.height())
-        .flat_map(|y| (0..floor.width()).map(move |x| Point { x, y }))
-        .collect();
-    let mut r = Vec::new();
-    let mut fs = 0;
-    while !points.is_empty() {
-        if fs > 16 {
-            break;
-        }
-        let _idx = (random::<u64>() as usize) % points.len();
-        let v = points.remove(_idx);
-        if let Some(room) = try_generate_room(v, floor, previous, has_another_room) {
-            fs += 1;
-            r.push(room);
-        }
-    }
-    if r.is_empty() {
-        return None;
-    }
-    let mut idx = 0;
-    let mut max_count = 0;
-    for i in 0..r.len() {
-        if r[i].boundary_positions.len() > max_count {
-            idx = i;
-            max_count = r[i].boundary_positions.len();
-        }
-    }
-    let v = r.remove(idx);
-    for i in &v.points {
-        floor.get_mut(i.x, i.y).is_occupied = true;
-    }
-    for i in v.min_x..=v.max_x {
-        floor.get_mut(i, v.min_y).sides[UP] = SideKind::Wall;
-    }
-    for i in v.min_x..=v.max_x {
-        floor.get_mut(i, v.max_y).sides[DOWN] = SideKind::Wall;
-    }
-    for i in v.min_y..=v.max_y {
-        floor.get_mut(v.min_x, i).sides[LEFT] = SideKind::Wall;
-    }
-    for i in v.min_y..=v.max_y {
-        floor.get_mut(v.max_x, i).sides[RIGHT] = SideKind::Wall;
-    }
-    Some(v)
-}
-
-pub fn try_generate_room(
-    point: Point,
-    floor: &mut Floor,
-    previous: &Floor,
-    has_another_room: bool,
-) -> Option<Room> {
-    let mut lc = 0;
-    for i in &floor.rooms {
-        if (i.max_x - i.min_x).abs() >= 15 || (i.max_y - i.min_y).abs() >= 15 {
-            let mut dist = 100000000;
-            for dx in 0..30 {
-                for y in i.min_y..=i.max_y {
-                    for x in i.min_x..=i.max_x {
-                        let d = ((point.x + dx - x) * (point.x + dx - x)
-                            + (point.y - y) * (point.y - y))
-                            .isqrt();
-                        if d < dist {
-                            dist = d;
-                        }
+pub fn connect_rooms(floor: &mut Floor) {
+    fn flood(floor: &Floor, point: Point, reachable_set: &mut HashSet<Point>) {
+        reachable_set.insert(point);
+        for dy in -1..=1 {
+            for dx in -1..=1 {
+                if dx == 0 && dy == 0 {
+                    continue;
+                }
+                if dx != 0 && dy != 0 {
+                    continue;
+                }
+                let p = Point {
+                    x: point.x + dx,
+                    y: point.y + dy,
+                };
+                if reachable_set.contains(&p) {
+                    continue;
+                }
+                if let Some(g) = floor.get_checked(p.x, p.y) {
+                    if g.is_occupied && !g.is_wall {
+                        flood(floor, p, reachable_set);
                     }
                 }
             }
-            for dy in 0..30 {
-                for y in i.min_y..=i.max_y {
-                    for x in i.min_x..=i.max_x {
-                        let d = ((point.x - x) * (point.x - x)
-                            + (point.y + dy - y) * (point.y + dy - y))
-                            .isqrt();
-                        if d < dist {
-                            dist = d;
-                        }
-                    }
-                }
-            }
-            if dist < 10 {
-                lc += 1;
-            }
         }
     }
-    let mut values = Vec::new();
-    let mut first = true;
-    'gt: loop {
-        let mut bases: Vec<(i32, i32)> = if first {
-            (5..10).flat_map(|h| (5..10).map(move |w| (w, h))).collect()
-        } else {
-            (3..8).flat_map(|h| (3..8).map(move |w| (w, h))).collect()
-        };
-        if lc < 1 {
-            for k in 2..=2 as i32 {
-                for j in 10..=30 {
-                    bases.push((k, j));
-                    bases.push((j, k));
-                }
-            }
+    let mut max_set = 0;
+    if floor.rooms.len() == 0 {
+        return;
+    }
+    let mut max_reachable = HashSet::new();
+    for i in 0..floor.rooms.len() {
+        let p0 = floor.rooms[i].points[0];
+        let mut reachable_from = HashSet::new();
+        flood(&floor, p0, &mut reachable_from);
+        if reachable_from.len() > max_reachable.len() {
+            max_reachable = reachable_from;
+            max_set = i;
         }
-        bases.shuffle(&mut rand::rng());
-        let bases = bases;
-        'outer: for (width, height) in bases {
-            let ratio = {
-                if width > height {
-                    width as f32 / height as f32
-                } else {
-                    height as f32 / width as f32
-                }
-            };
-            if ratio > 1.5 && ratio < 5. {
+    }
+    let mut r2 = Vec::new();
+    for i in 0..floor.rooms.len() {
+        if max_reachable.contains(&floor.rooms[i].points[0]) {
+            r2.push(floor.rooms[i].clone());
+        }
+    }
+    let mut reachable_set = HashSet::new();
+    reachable_set.insert(max_set);
+    let mut stack = Vec::new();
+    stack.push(max_set);
+    let mut checked = HashSet::new();
+    while let Some(i) = stack.pop() {
+        if checked.contains(&i) {
+            continue;
+        }
+        checked.insert(i);
+        let mut bounds = floor.rooms[i].get_boundary_points_nice(0);
+        bounds.shuffle(&mut rand::rng());
+        let bounds = bounds;
+        for j in 0..floor.rooms.len() {
+            stack.push(j);
+            if floor.rooms[i].connections.contains(&j) || floor.rooms[j].connections.contains(&i) {
                 continue;
             }
-            let mut points = Vec::new();
-            for dy in point.y..point.y + height {
-                for dx in point.x..point.x + width {
-                    if let Some(tmp) = previous.get_checked(dx, dy) {
-                        if !tmp.is_occupied {
-                            continue 'outer;
-                        }
-                    } else {
-                        continue 'outer;
-                    }
-                    if let Some(tmp) = floor.get_checked(dx, dy) {
-                        if tmp.is_occupied {
-                            continue 'outer;
-                        }
-                    } else {
-                        continue 'outer;
-                    }
-                    points.push(Point { x: dx, y: dy });
+            if reachable_set.contains(&j)
+                && reachable_set.contains(&j)
+                && (random::<u32>() % 4 == 0)
+            {
+                continue;
+            }
+            if i == j {
+                continue;
+            }
+            let mut hit = None;
+            for dj in &bounds {
+                if floor.rooms[j].points.contains(dj) {
+                    println!("{:#?}", dj);
+                    hit = Some(*dj);
                 }
             }
-            let points = points;
-            let mut hit_other_count = 0;
-            let mut border_positions = Vec::new();
-            let x_pos = point.x - 1;
-            for dy in point.y..point.y + height {
-                if let Some(t) = floor.get_checked(x_pos, dy) {
-                    if t.is_occupied {
-                        hit_other_count += 1;
-                        border_positions.push(Point { x: x_pos, y: dy })
-                    }
-                }
-            }
-            let x_pos = point.x + width;
-            for dy in point.y..point.y + height {
-                if let Some(t) = floor.get_checked(x_pos, dy) {
-                    if t.is_occupied {
-                        hit_other_count += 1;
-                        border_positions.push(Point { x: x_pos, y: dy })
-                    }
-                }
-            }
-            let y_pos = point.y - 1;
-            for dx in point.x..point.x + width {
-                if let Some(t) = floor.get_checked(dx, y_pos) {
-                    if t.is_occupied {
-                        hit_other_count += 1;
-                        border_positions.push(Point { x: dx, y: y_pos })
+            if let Some(m) = hit {
+                for k in 0..4 {
+                    let p2 = Point {
+                        x: m.x + DIRECTIONS[k].0,
+                        y: m.y + DIRECTIONS[k].1,
+                    };
+                    if floor.rooms[i].points.contains(&p2) {
+                        floor.get_mut(m.x, m.y).sides[k] = SideKind::Door;
+                        let s2 = if k == UP {
+                            DOWN
+                        } else if k == DOWN {
+                            UP
+                        } else if k == LEFT {
+                            RIGHT
+                        } else {
+                            LEFT
+                        };
+                        floor.get_mut(m.x, m.y).sides[k] = SideKind::Door;
+                        floor.get_mut(p2.x, p2.y).sides[s2] = SideKind::Door;
+                        floor.rooms[i].connections.push(j);
+                        floor.rooms[j].connections.push(i);
+                        reachable_set.insert(j);
+                        stack.push(j);
                     }
                 }
             }
-            let y_pos = point.y + height;
-            for dx in point.x..point.x + width {
-                if let Some(t) = floor.get_checked(dx, y_pos) {
-                    if t.is_occupied {
-                        hit_other_count += 1;
-                        border_positions.push(Point { x: dx, y: y_pos })
+        }
+    }
+
+    println!(
+        "connected set:{}, room count:{}",
+        reachable_set.len(),
+        floor.rooms.len()
+    );
+}
+
+impl Room {
+    pub fn get_boundary_points(&self) -> Vec<Point> {
+        let mut out = Vec::new();
+        for i in &self.points {
+            for dy in -1..=1 {
+                for dx in -1..=1 {
+                    if dx == 0 && dy == 0 {
+                        continue;
+                    }
+                    if dx != 0 && dy != 0 {
+                        continue;
+                    }
+                    let p2 = Point {
+                        x: i.x + dx,
+                        y: i.y + dy,
+                    };
+                    if self.points.contains(&p2) {
+                        continue;
+                    }
+                    if !out.contains(&p2) {
+                        out.push(p2);
                     }
                 }
             }
-            if (hit_other_count < 5) && has_another_room {
-                continue 'outer;
-            }
-            values.push(Room {
-                min_y: point.y,
-                min_x: point.x,
-                max_x: point.x + width - 1,
-                max_y: point.y + height - 1,
-                points,
-                boundary_positions: border_positions,
+        }
+        out
+    }
+
+    pub fn get_boundary_points_nice(&self, no_progress_count: i32) -> Vec<Point> {
+        let mut points = Vec::new();
+        let v = self;
+        let delt = if no_progress_count > 0 { -2 } else { 1 };
+        for i in v.min_x + delt..=v.max_x - delt {
+            points.push(Point {
+                x: i,
+                y: v.min_y - 1,
             });
         }
-        if values.len() != 0 {
-            break 'gt;
-        } else if first {
-            first = false;
-        } else {
-            break 'gt;
+        for i in v.min_x + delt..=v.max_x - delt {
+            points.push(Point {
+                x: i,
+                y: v.max_y + 1,
+            });
         }
-    }
-    if values.is_empty() {
-        return None;
-    }
-    let mut max_count = 0;
-    let mut max_idx = 0;
-    for i in 0..values.len() {
-        let offset = (random::<u64>() as usize) % 4;
-        if values[i].points.len() + offset > max_count {
-            max_count = values[i].boundary_positions.len() + offset;
-            max_idx = i;
+        for i in v.min_y + delt..=v.max_y - delt {
+            points.push(Point {
+                x: v.min_x - 1,
+                y: i,
+            });
         }
+        for i in v.min_y + delt..=v.max_y - delt {
+            points.push(Point {
+                x: v.max_x + 1,
+                y: i,
+            });
+        }
+        points
     }
-    let v = values.remove(max_idx);
-    Some(v)
 }
