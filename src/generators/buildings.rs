@@ -231,6 +231,24 @@ impl Floor {
                 }
             }
         }
+        for (idx, i) in self.rooms.iter().enumerate() {
+            let mut cmx = 0;
+            let mut cmy = 0;
+            for i in &i.points {
+                cmx += i.x;
+                cmy += i.y;
+            }
+            cmx /= i.points.len() as i32;
+            cmy /= i.points.len() as i32;
+            out.draw_text(
+                &format!("{}", idx + 1),
+                cmx * 10 + 5,
+                cmy * 10 + 5,
+                10,
+                Color::BLACK,
+            );
+            println!("{}", idx);
+        }
         out.export_image(name);
     }
 }
@@ -532,7 +550,7 @@ pub fn try_generate_room(
                     }
                 }
             }
-            if dist < 25 {
+            if dist < 16 {
                 lc += 1;
             }
         }
@@ -543,7 +561,7 @@ pub fn try_generate_room(
         let mut bases: Vec<(i32, i32)> = if first {
             (5..10).flat_map(|h| (5..10).map(move |w| (w, h))).collect()
         } else {
-            (3..8).flat_map(|h| (3..8).map(move |w| (w, h))).collect()
+            (3..8).flat_map(|h| (5..8).map(move |w| (w, h))).collect()
         };
         bases.reserve(120);
         if lc < 1 {
