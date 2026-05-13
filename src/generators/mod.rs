@@ -1,2 +1,247 @@
+use std::cmp::Ordering;
+
+use raylib::math::Vector2;
+
+use crate::libgui::{Bounds, Point};
+
 pub mod buildings;
 pub mod city;
+pub fn distance_to_line_segmment(point: Point, start: Point, end: Point) -> i32 {
+    let mut base = Vector2::new(start.x as f32, start.y as f32);
+    let delta = Vector2::new((end.x - start.x) as f32, (end.y - start.y) as f32).normalized();
+    let count = (Vector2::new((end.x - start.x) as f32, (end.y - start.y) as f32))
+        .length()
+        .ceil() as u32;
+    let p = Vector2::new(point.x as f32, point.y as f32);
+    let mut min_dist = base.distance_to(p);
+    for _ in 0..count {
+        base += delta;
+        let tmp = base.distance_to(p);
+        if tmp < min_dist {
+            min_dist = tmp;
+        }
+    }
+    min_dist as i32
+}
+//https://stackoverflow.com/questions/78588965/how-to-sort-a-vector-in-rust-that-only-has-partial-ordering
+pub fn partialordsort<T>(mut items: &mut [T], mut cmp: impl FnMut(&T, &T) -> Ordering) {
+    let mut presorted = 1;
+
+    while items.len() > presorted {
+        'make_start_min: loop {
+            for i in presorted..items.len() {
+                let ordering = cmp(&items[0], &items[i]);
+                if ordering == Ordering::Greater {
+                    items.swap(presorted, i);
+                    items[0..presorted + 1].rotate_right(1);
+                    presorted += 1;
+                    continue 'make_start_min;
+                }
+            }
+
+            break;
+        }
+
+        presorted = usize::max(presorted - 1, 1);
+        items = &mut items[1..];
+    }
+}
+
+pub fn distance_between_line_segments(
+    ls0_start: Point,
+    ls0_end: Point,
+    ls1_start: Point,
+    ls1_end: Point,
+) -> i32 {
+    let (start, end, v0, v1) = if (Vector2::new(ls0_start.x as f32, ls0_start.y as f32)
+        .distance_to(Vector2::new(ls0_end.x as f32, ls0_end.y as f32)))
+        < (Vector2::new(ls1_start.x as f32, ls1_start.y as f32)
+            .distance_to(Vector2::new(ls1_end.x as f32, ls1_end.y as f32)))
+    {
+        (
+            Vector2::new(ls0_start.x as f32, ls0_start.y as f32),
+            Vector2::new(ls0_end.x as f32, ls0_end.y as f32),
+            ls1_start,
+            ls1_end,
+        )
+    } else {
+        (
+            Vector2::new(ls1_start.x as f32, ls1_start.y as f32),
+            Vector2::new(ls1_end.x as f32, ls1_end.y as f32),
+            ls0_start,
+            ls0_end,
+        )
+    };
+    let mut base = Vector2::new(start.x as f32, start.y as f32);
+    let delta = Vector2::new((end.x - start.x) as f32, (end.y - start.y) as f32).normalized();
+    let count = (Vector2::new((end.x - start.x) as f32, (end.y - start.y) as f32))
+        .length()
+        .ceil() as u32;
+    let mut min_dist = distance_to_line_segmment(
+        Point {
+            x: base.x as i32,
+            y: base.y as i32,
+        },
+        v0,
+        v1,
+    );
+    for _ in 0..count {
+        base += delta;
+        let tmp = distance_to_line_segmment(
+            Point {
+                x: base.x as i32,
+                y: base.y as i32,
+            },
+            v0,
+            v1,
+        );
+        if tmp < min_dist {
+            min_dist = tmp;
+        }
+    }
+    min_dist
+}
+
+pub fn collision_seperating_axis_theorem(set_1: &[Point], set_2: &[Point]) -> Option<Vector2> {
+    let mut c1 = Vector2::zero();
+    let mut c2 = Vector2::zero();
+    for i in set_1 {
+        c1 += i.as_vec2();
+    }
+    for i in set_2 {
+        c2 += i.as_vec2();
+    }
+    let c1 = c1 / (set_1.len() as f32);
+    let c2 = c2 / (set_2.len() as f32);
+    let mut normals: Vec<Vector2> = Vec::new();
+    normals.reserve_exact(set_1.len() * 2 + set_2.len() * 2);
+    for i in 0..set_1.len() {
+        let j = (i + 1) % set_1.len();
+        let v0 = set_1[i].as_vec2();
+        let v1 = set_1[j].as_vec2();
+        let dir = (v1 - v0).normalized();
+        let cent = (v1 + v0) / 2.;
+        let dcent = (cent - c1).normalized();
+        let n1 = dir.rotated(std::f32::consts::PI / 2.);
+        let norm = if n1.dot(dcent) > 0.0 { n1 } else { -n1 };
+        let n0 = (v0 - c1).normalized();
+        normals.push(norm);
+        normals.push(n0);
+    }
+    for i in 0..set_2.len() {
+        let j = (i + 1) % set_2.len();
+        let v0 = set_2[i].as_vec2();
+        let v1 = set_2[j].as_vec2();
+        let dir = (v1 - v0).normalized();
+        let cent = (v1 + v0) / 2.;
+        let dcent = (cent - c2).normalized();
+        let n1 = dir.rotated(std::f32::consts::PI / 2.);
+        let norm = if n1.dot(dcent) > 0.0 { n1 } else { -n1 };
+        let n0 = (v0 - c2).normalized();
+        normals.push(norm);
+        normals.push(n0);
+    }
+    let mut min_delta: f32 = 10000000000.0;
+    let mut min_normal = normals[0];
+    for i in normals {
+        let mut smin = set_1[0].as_vec2().dot(i);
+        let mut smax = set_1[0].as_vec2().dot(i);
+        let mut omin = set_2[0].as_vec2().dot(i);
+        let mut omax = set_2[0].as_vec2().dot(i);
+        for j in set_1 {
+            let v = i.dot(j.as_vec2());
+            if v > smax {
+                smax = v;
+            }
+            if v < smin {
+                smin = v;
+            }
+        }
+        for j in set_2 {
+            let v = i.dot(j.as_vec2());
+            if v > omax {
+                omax = v;
+            }
+            if v < omin {
+                omin = v;
+            }
+        }
+
+        if (smin < omin && smax < omin && smin < omax && smax < omax)
+            || (omin < smin && omax < omin && omin < omax && omax < smax)
+        {
+            return None;
+        }
+        let delta_1 = (omin - smax).abs();
+        let delta_2 = (smin - omax).abs();
+        let delta_3 = (smax - omax).abs();
+        let delta_4 = (smin - omin).abs();
+        let delta = min(min(delta_1, delta_2), min(delta_3, delta_4));
+        if delta < min_delta {
+            min_delta = delta;
+            min_normal = i;
+        }
+    }
+    Some(min_normal)
+}
+
+pub fn min<T: PartialOrd>(a: T, b: T) -> T {
+    if a < b { a } else { b }
+}
+
+pub fn max<T: PartialOrd>(a: T, b: T) -> T {
+    if a > b { a } else { b }
+}
+
+pub struct Boundary {
+    pub bounds: Bounds,
+    pub rotation: f32,
+}
+impl Boundary {
+    pub fn vertices(&self) -> [Vector2; 4] {
+        let mut out = [
+            Vector2::new(
+                -self.bounds.width as f32 / 2.,
+                -self.bounds.height as f32 / 2.,
+            ),
+            Vector2::new(
+                self.bounds.width as f32 / 2.,
+                -self.bounds.height as f32 / 2.,
+            ),
+            Vector2::new(
+                -self.bounds.width as f32 / 2.,
+                self.bounds.height as f32 / 2.,
+            ),
+            Vector2::new(
+                self.bounds.width as f32 / 2.,
+                self.bounds.height as f32 / 2.,
+            ),
+        ];
+        let center = Vector2::new(self.bounds.x as f32, self.bounds.y as f32)
+            + Vector2::new(
+                self.bounds.width as f32 / 2.0,
+                self.bounds.height as f32 / 2.0,
+            );
+        for i in &mut out {
+            *i = i.rotated(self.rotation) + center;
+        }
+        out
+    }
+
+    pub fn normals(&self) -> [Vector2; 8] {
+        let mut out = [
+            Vector2::new(1.0, 0.0),
+            Vector2::new(0.0, 1.0),
+            Vector2::new(-1., 0.0),
+            Vector2::new(0.0, -1.0),
+            Vector2::new(1.0, 1.0).normalized(),
+            Vector2::new(1.0, -1.0).normalized(),
+            Vector2::new(-1.0, 1.0).normalized(),
+            Vector2::new(1.0, -1.0).normalized(),
+        ];
+        for i in &mut out {
+            *i = i.rotated(self.rotation);
+        }
+        out
+    }
+}

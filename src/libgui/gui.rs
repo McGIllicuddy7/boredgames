@@ -24,6 +24,21 @@ pub struct Point {
     pub x: i32,
     pub y: i32,
 }
+
+impl Point {
+    pub fn as_vec2(&self) -> raylib::math::Vector2 {
+        Vector2 {
+            x: self.x as f32,
+            y: self.y as f32,
+        }
+    }
+    pub fn from_vec2(v: raylib::math::Vector2) -> Self {
+        Self {
+            x: v.x as i32,
+            y: v.y as i32,
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Bounds {
     pub x: i32,
