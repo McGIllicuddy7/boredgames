@@ -1,7 +1,10 @@
 use std::fmt::Debug;
 
 use crate::{
-    generators::buildings::{generate_ground_floor, post_process_floor},
+    generators::{
+        buildings::{generate_ground_floor, post_process_floor},
+        city::create_city,
+    },
     utils::{Heap, HeapRef, WeakHeap},
 };
 
@@ -14,4 +17,7 @@ pub mod builder;
 
 pub mod generators;
 #[tokio::main]
-pub async fn main() {}
+pub async fn main() {
+    let city = create_city(50);
+    city.draw();
+}

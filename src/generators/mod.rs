@@ -102,7 +102,10 @@ pub fn distance_between_line_segments(
     min_dist
 }
 
-pub fn collision_seperating_axis_theorem(set_1: &[Point], set_2: &[Point]) -> Option<Vector2> {
+pub fn collision_seperating_axis_theorem_points(
+    set_1: &[Point],
+    set_2: &[Point],
+) -> Option<Vector2> {
     let mut c1 = Vector2::zero();
     let mut c2 = Vector2::zero();
     for i in set_1 {
@@ -185,6 +188,88 @@ pub fn collision_seperating_axis_theorem(set_1: &[Point], set_2: &[Point]) -> Op
     Some(min_normal)
 }
 
+pub fn collision_seperating_axis_theorem(set_1: &[Vector2], set_2: &[Vector2]) -> Option<Vector2> {
+    let mut c1 = Vector2::zero();
+    let mut c2 = Vector2::zero();
+    for i in set_1 {
+        c1 += *i;
+    }
+    for i in set_2 {
+        c2 += *i;
+    }
+    let c1 = c1 / (set_1.len() as f32);
+    let c2 = c2 / (set_2.len() as f32);
+    let mut normals: Vec<Vector2> = Vec::new();
+    normals.reserve_exact(set_1.len() * 2 + set_2.len() * 2);
+    for i in 0..set_1.len() {
+        let j = (i + 1) % set_1.len();
+        let v0 = set_1[i];
+        let v1 = set_1[j];
+        let dir = (v1 - v0).normalized();
+        let cent = (v1 + v0) / 2.;
+        let dcent = (cent - c1).normalized();
+        let n1 = dir.rotated(std::f32::consts::PI / 2.);
+        let norm = if n1.dot(dcent) > 0.0 { n1 } else { -n1 };
+        let n0 = (v0 - c1).normalized();
+        normals.push(norm);
+        normals.push(n0);
+    }
+    for i in 0..set_2.len() {
+        let j = (i + 1) % set_2.len();
+        let v0 = set_2[i];
+        let v1 = set_2[j];
+        let dir = (v1 - v0).normalized();
+        let cent = (v1 + v0) / 2.;
+        let dcent = (cent - c2).normalized();
+        let n1 = dir.rotated(std::f32::consts::PI / 2.);
+        let norm = if n1.dot(dcent) > 0.0 { n1 } else { -n1 };
+        let n0 = (v0 - c2).normalized();
+        normals.push(norm);
+        normals.push(n0);
+    }
+    let mut min_delta: f32 = 10000000000.0;
+    let mut min_normal = normals[0];
+    for i in normals {
+        let mut smin = set_1[0].dot(i);
+        let mut smax = set_1[0].dot(i);
+        let mut omin = set_2[0].dot(i);
+        let mut omax = set_2[0].dot(i);
+        for j in set_1 {
+            let v = i.dot(*j);
+            if v > smax {
+                smax = v;
+            }
+            if v < smin {
+                smin = v;
+            }
+        }
+        for j in set_2 {
+            let v = i.dot(*j);
+            if v > omax {
+                omax = v;
+            }
+            if v < omin {
+                omin = v;
+            }
+        }
+
+        if (smin < omin && smax < omin && smin < omax && smax < omax)
+            || (omin < smin && omax < omin && omin < omax && omax < smax)
+        {
+            return None;
+        }
+        let delta_1 = (omin - smax).abs();
+        let delta_2 = (smin - omax).abs();
+        let delta_3 = (smax - omax).abs();
+        let delta_4 = (smin - omin).abs();
+        let delta = min(min(delta_1, delta_2), min(delta_3, delta_4));
+        if delta < min_delta {
+            min_delta = delta;
+            min_normal = i;
+        }
+    }
+    Some(min_normal)
+}
 pub fn min<T: PartialOrd>(a: T, b: T) -> T {
     if a < b { a } else { b }
 }
@@ -193,6 +278,7 @@ pub fn max<T: PartialOrd>(a: T, b: T) -> T {
     if a > b { a } else { b }
 }
 
+#[derive(Clone, Debug, Copy)]
 pub struct Boundary {
     pub bounds: Bounds,
     pub rotation: f32,
@@ -243,5 +329,61 @@ impl Boundary {
             *i = i.rotated(self.rotation);
         }
         out
+    }
+    pub fn check_collision(&self, other: &Self) -> bool {
+        collision_seperating_axis_theorem(&self.vertices(), &other.vertices()).is_some()
+    }
+    pub fn distance_to_line(&self, start: Point, end: Point) -> i32 {
+        let vs = self.vertices();
+        let p0 = Point::from_vec2(vs[0]);
+        let p1 = Point::from_vec2(vs[1]);
+        let p2 = Point::from_vec2(vs[2]);
+        let p3 = Point::from_vec2(vs[3]);
+        let d0 = distance_between_line_segments(p0, p1, start, end);
+        let d1 = distance_between_line_segments(p0, p2, start, end);
+        let d2 = distance_between_line_segments(p3, p1, start, end);
+        let d3 = distance_between_line_segments(p3, p2, start, end);
+        min(min(d0, d1), min(d2, d3))
+    }
+}
+
+pub struct Queue<T> {
+    values: Vec<T>,
+    compare: Box<dyn Fn(&T, &T) -> std::cmp::Ordering>,
+}
+impl<T: PartialOrd> Queue<T> {
+    pub fn new() -> Self {
+        Self {
+            values: Vec::new(),
+            compare: Box::new(|a, b| {
+                if let Some(cmp) = a.partial_cmp(b) {
+                    cmp
+                } else {
+                    std::cmp::Ordering::Greater
+                }
+            }),
+        }
+    }
+}
+
+impl<T> Queue<T> {
+    pub fn new_cmp(comp: impl Fn(&T, &T) -> std::cmp::Ordering + 'static) -> Self {
+        Self {
+            values: Vec::new(),
+            compare: Box::new(comp),
+        }
+    }
+
+    pub fn insert(&mut self, value: T) {
+        for idx in 0..self.values.len() {
+            if (self.compare)(&value, &self.values[idx]) == std::cmp::Ordering::Less {
+                self.values.insert(idx, value);
+            }
+            return;
+        }
+        self.values.push(value);
+    }
+    pub fn pop(&mut self) -> Option<T> {
+        self.values.pop()
     }
 }
