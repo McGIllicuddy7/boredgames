@@ -56,8 +56,8 @@ pub fn set_up_roads(city: &mut City) -> Queue<(Point, f32)> {
     }
     fn next_point(last: Point, second_to_last: Point) -> Point {
         let delta = (last.as_vec2() - second_to_last.as_vec2()).normalized();
-        let distance = (random::<u64>() % 16 + 20) as f32;
-        let dtheta = ((random::<u64>() % 64) as i32 - 32) as f32 / (128.);
+        let distance = (random::<u64>() % 32 + 20) as f32;
+        let dtheta = ((random::<u64>() % 64) as i32 - 32) as f32 / (1024.);
         let new_point = last.as_vec2() + delta.rotated(dtheta) * distance;
         Point::from_vec2(new_point)
     }
@@ -86,7 +86,7 @@ pub fn set_up_roads(city: &mut City) -> Queue<(Point, f32)> {
                 std::cmp::Ordering::Greater
             }
         });
-    for _ in 0..=50 {
+    for i in 0..=50 {
         let mut v = VecDeque::new();
         let p0 = random_point();
         let p1 = {
@@ -100,7 +100,8 @@ pub fn set_up_roads(city: &mut City) -> Queue<(Point, f32)> {
         v.push_back(p1);
         let mut last = p1;
         let mut dist = p1.as_vec2().distance_to(p0.as_vec2());
-        let max_dist = (random::<u64>() % 200 + 200) as f32;
+        let max_dist = (random::<u64>() % 200 + 400) as f32;
+        let mut fs = 0;
         while dist < max_dist {
             let (back, mut p) = next_point_from_list(&v);
             'it: for j in &city.roads {
@@ -119,8 +120,13 @@ pub fn set_up_roads(city: &mut City) -> Queue<(Point, f32)> {
             let d = last.as_vec2().distance_to(p.as_vec2());
             dist += d;
             last = p;
+            fs += 1;
+            if fs>= 500{
+                break;
+            }
         }
         city.roads.push(Road { points: v.into() });
+        println!("{}",i);
     }
     point_queue
 }

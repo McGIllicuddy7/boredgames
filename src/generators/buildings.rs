@@ -1,4 +1,4 @@
-use std::{collections::HashSet, os::macos::raw::stat};
+use std::{collections::HashSet};
 
 use libc::rand;
 use rand::{random, seq::SliceRandom};
