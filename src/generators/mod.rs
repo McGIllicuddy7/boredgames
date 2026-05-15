@@ -9,92 +9,58 @@ pub mod city;
 
 //https://www.geeksforgeeks.org/dsa/minimum-distance-from-a-point-to-the-line-segment-using-vectors/
 pub fn distance_to_line_segmment(point: Point, start: Point, end: Point) -> i32 {
-    /*
-      let x0 = point.x as f32;
-    let x1 = end.x as f32;
-    let x2 = start.x as f32;
-    let y0 = point.y as f32;
-    let y1 = end.y as f32;
-    let y2 = start.y as f32;
-    let a = ((y2 - y1) * x0 - (x2 - x1) * y0 + x2 * y1 - y2 * x1).abs();
-    let b = ((y2 - y1) * (y2 - y1) + (x2 - x1) * (x2 - x1)).sqrt();
-    let d1 = point.as_vec2().distance_to(start.as_vec2());
-    let d2 = point.as_vec2().distance_to(end.as_vec2());
-    if b.abs() < 0.001 {
-        return min(d1 as i32, d2 as i32);
-    }
-    let d0 = a / b;
-    min(d0 as i32, min(d1 as i32, d2 as i32))
-     */
-    /*
-    let mut base = Vector2::new(start.x as f32, start.y as f32);
-    let delta = Vector2::new((end.x - start.x) as f32, (end.y - start.y) as f32).normalized();
-    let count = (Vector2::new((end.x - start.x) as f32, (end.y - start.y) as f32))
-        .length()
-        .ceil() as u32;
-    let p = Vector2::new(point.x as f32, point.y as f32);
-    let mut min_dist = base.distance_to(p);
-    for _ in 0..count {
-        base += delta;
-        let tmp = base.distance_to(p);
-        if tmp < min_dist {
-            min_dist = tmp;
-        }
-    }
-    min_dist as i32
-    */
-    let E = point.as_vec2();
-    let A = start.as_vec2();
-    let B = end.as_vec2();
-    let AB = end.as_vec2() - start.as_vec2();
+    let e = point.as_vec2();
+    let a = start.as_vec2();
+    let b = end.as_vec2();
+    let ab = end.as_vec2() - start.as_vec2();
 
     // vector BP
-    let BE = point.as_vec2() - end.as_vec2();
+    let be = point.as_vec2() - end.as_vec2();
     // BE.F = E.F - B.F;
     //BE.S = E.S - B.S;
 
     // vector AP
-    let AE = point.as_vec2() - start.as_vec2();
+    let ae = point.as_vec2() - start.as_vec2();
     //AE.F = E.F - A.F,
     //AE.S = E.S - A.S;
 
     // Calculating the dot product
-    let AB_BE = AB.x * BE.x + AB.y * BE.y;
-    let AB_AE = AB.x * AE.x + AB.y * AE.y;
+    let ab_be = ab.x * be.x + ab.y * be.y;
+    let ab_ae = ab.x * ae.x + ab.y * ae.y;
 
     // Minimum distance from
     // point E to the line segment
-    let mut reqAns = 0.0;
+    let mut req_ans = 0.0;
 
     // Case 1
-    if AB_BE > 0. {
+    if ab_be > 0. {
         // Finding the magnitude
-        let x = E.x - B.x;
-        let y = E.y - B.y;
-        reqAns = (x * x + y * y).sqrt();
+        let x = e.x - b.x;
+        let y = e.y - b.y;
+        req_ans = (x * x + y * y).sqrt();
     }
     // Case 2
-    else if AB_AE < 0. {
-        let x = E.x - A.x;
-        let y = E.y - A.y;
-        reqAns = (x * x + y * y).sqrt();
+    else if ab_ae < 0. {
+        let x = e.x - a.x;
+        let y = e.y - a.y;
+        req_ans = (x * x + y * y).sqrt();
     }
     // Case 3
     else {
         // Finding the perpendicular distance
-        let x1 = AB.x;
-        let y1 = AB.y;
-        let x2 = AE.x;
-        let y2 = AE.y;
+        let x1 = ab.x;
+        let y1 = ab.y;
+        let x2 = ae.x;
+        let y2 = ae.y;
         let md = (x1 * x1 + y1 * y1).sqrt();
-        reqAns = (x1 * y2 - y1 * x2).abs() / md;
+        req_ans = (x1 * y2 - y1 * x2).abs() / md;
     }
-    reqAns as i32
+    req_ans as i32
 }
+
 //https://stackoverflow.com/questions/78588965/how-to-sort-a-vector-in-rust-that-only-has-partial-ordering
 pub fn partialordsort<T>(mut items: &mut [T], mut cmp: impl FnMut(&T, &T) -> Ordering) {
     let mut presorted = 1;
-
     while items.len() > presorted {
         'make_start_min: loop {
             for i in presorted..items.len() {

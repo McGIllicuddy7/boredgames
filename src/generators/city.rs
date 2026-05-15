@@ -1,8 +1,10 @@
+use core::f32;
 use std::collections::VecDeque;
 
 use rand::{random, random_bool};
 use raylib::{color::Color, texture::Image};
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use serde::de;
 
 #[allow(unused)]
 use super::*;
@@ -30,7 +32,7 @@ pub fn create_city(building_count: usize) -> City {
     };
     city.roads.push(start_road);
     let mut point_queue = set_up_roads(&mut city);
-    while grow_city(&mut city, &mut point_queue, 2, 10).is_some() {
+    while grow_city(&mut city, &mut point_queue, 2, 20).is_some() {
         println!("{:#?}", city.buildings.len());
         if city.buildings.len() >= building_count {
             return city;
@@ -47,8 +49,9 @@ pub fn grow_city(
     _max_dist: i32,
 ) -> Option<()> {
     while let Some((p, theta)) = queue.pop() {
-        for height in (8..12).rev() {
-            for dw in -2..=2  {
+        let max_h = 10 + (random::<u64>() % 6) as i32;
+        for height in (8..=max_h).rev() {
+            for dw in -1..=1 {
                 let width = height + dw;
                 let b = Building {
                     bounds: Boundary {
@@ -86,7 +89,8 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
     }
     //if bool true push_back
     fn next_point_from_list(list: &VecDeque<Point>) -> (bool, Point) {
-        let should_go = list[0].as_vec2().distance_to(Vector2::new(500., 500.)) < list[list.len() - 1]
+        let should_go = list[0].as_vec2().distance_to(Vector2::new(500., 500.))
+            < list[list.len() - 1]
                 .as_vec2()
                 .distance_to(Vector2::new(500., 500.));
         if (should_go && random_bool(0.9)) || (random_bool(0.35)) {
@@ -104,13 +108,13 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
     let mut point_queue = Vec::new();
     'generate: for i in 0..=25 {
         let mut v = VecDeque::new();
-        let p0 = if i == 0 || random_bool(0.2) {
+        let p0 = if i == 0 || random_bool(0.8) {
             let mut fs = 0;
             'l0: loop {
                 let tmp = random_point();
                 for j in &city.roads {
                     for k in &j.points {
-                        if k.as_vec2().distance_to(tmp.as_vec2()) < 100. {
+                        if k.as_vec2().distance_to(tmp.as_vec2()) < 10. {
                             fs += 1;
                             if fs > 100 {
                                 break 'generate;
@@ -173,7 +177,9 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
                 } else {
                     continue 'lp;
                 }
-            } else { last_close = close; }
+            } else {
+                last_close = close;
+            }
             let last = if back {
                 let tmp = v[v.len() - 1];
                 v.push_back(p);
@@ -195,9 +201,53 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
     }
     let mut pairs = Vec::new();
     let mut fs = 0;
-    while pairs.len() < 50 {
+    while pairs.len() < 20 {
         fs += 1;
-        if fs > 100 {
+        if fs > 1000 {
+            break;
+        }
+        let s = random::<u64>() as usize % city.roads.len();
+        let s2 = random::<u64>() as usize % city.roads.len();
+        if s == s2 {
+            continue;
+        }
+        let idx1 = (random::<u64>() as usize) % city.roads[s].points.len();
+        let idx2 = (random::<u64>() as usize) % city.roads[s2].points.len();
+        let p0 = city.roads[s].points[idx1];
+        let p1 = city.roads[s2].points[idx2];
+        if p0.as_vec2().distance_to(p1.as_vec2()) > 8000.
+            || p0.as_vec2().distance_to(p1.as_vec2()) < 300.0
+        {
+            continue;
+        }
+        if p0 == p1 {
+            continue;
+        } else {
+            pairs.push((p0, p1));
+        }
+    }
+    for i in pairs {
+        let mut points = Vec::new();
+        let p0 = i.0.as_vec2();
+        let p1 = i.1.as_vec2();
+        let count = (p0.distance_to(p1) / 16.).floor() as i32;
+        let delta = (p1 - p0).normalized() * 16.0;
+        let mut current = p0;
+        for _ in 0..count {
+            points.push(Point::from_vec2(current));
+            current += delta;
+        }
+        if points.len() < 2 {
+            continue;
+        }
+        let r = Road { points };
+        city.roads.push(r);
+    }
+    let mut pairs = Vec::new();
+    fs = 0;
+    while pairs.len() < 40 {
+        fs += 1;
+        if fs > 1000 {
             break;
         }
         let s = random::<u64>() as usize % city.roads.len();
@@ -210,43 +260,6 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
         let p0 = city.roads[s].points[idx1];
         let p1 = city.roads[s2].points[idx2];
         if p0.as_vec2().distance_to(p1.as_vec2()) > 300.
-            || p0.as_vec2().distance_to(p1.as_vec2()) < 200.0
-        {
-            continue;
-        }
-        if p0 == p1 {
-            continue;
-        } else {
-            pairs.push((p0, p1));
-        }
-    }
-    for i in pairs {
-        let r = Road {
-            points: vec![
-                i.0,
-                Point::from_vec2((i.0.as_vec2() + i.1.as_vec2()) / 2.),
-                i.1,
-            ],
-        };
-        city.roads.push(r);
-    }
-    let mut pairs = Vec::new();
-    fs = 0;
-    while pairs.len() < 50 {
-        fs += 1;
-        if fs > 100 {
-            break;
-        }
-        let s = random::<u64>() as usize % city.roads.len();
-        let s2 = random::<u64>() as usize % city.roads.len();
-        if s == s2 {
-            continue;
-        }
-        let idx1 = (random::<u64>() as usize) % city.roads[s].points.len();
-        let idx2 = (random::<u64>() as usize) % city.roads[s2].points.len();
-        let p0 = city.roads[s].points[idx1];
-        let p1 = city.roads[s2].points[idx2];
-        if p0.as_vec2().distance_to(p1.as_vec2()) > 50.
             || p0.as_vec2().distance_to(p1.as_vec2()) < 10.
         {
             continue;
@@ -258,13 +271,20 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
         }
     }
     for i in pairs {
-        let r = Road {
-            points: vec![
-                i.0,
-                Point::from_vec2((i.0.as_vec2() + i.1.as_vec2()) / 2.),
-                i.1,
-            ],
-        };
+        let mut points = Vec::new();
+        let p0 = i.0.as_vec2();
+        let p1 = i.1.as_vec2();
+        let count = (p0.distance_to(p1) / 16.).floor() as i32;
+        let delta = (p1 - p0).normalized() * 16.0;
+        let mut current = p0;
+        for _ in 0..count {
+            points.push(Point::from_vec2(current));
+            current += delta;
+        }
+        if points.len() < 2 {
+            continue;
+        }
+        let r = Road { points };
         city.roads.push(r);
     }
     let mut spikes: Vec<(Point, Point, Point)> = Vec::new();
@@ -273,7 +293,7 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
             if random_bool(
                 (i.points[j].as_vec2().distance_to(Vector2::new(500., 500.)) / 500.)
                     .sqrt()
-                    .clamp(0., 0.5) as f64,
+                    .clamp(0.1, 0.4) as f64,
             ) {
                 let p0 = i.points[j - 1];
                 let p1 = i.points[j];
@@ -286,7 +306,7 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
                     delta_2
                 };
                 let delta = (delta2 + delta_1) / 2.0;
-                let scale_1 = (random::<u64>() % 12 + 30) as f32;
+                let scale_1 = (random::<u64>() % 16 + 8) as f32;
                 let s1 = Point::from_vec2(p1.as_vec2() + delta * scale_1 / 2.0);
                 let s2 = Point::from_vec2(p1.as_vec2() + delta * scale_1);
                 let s0 = [p1, s1, s2];
@@ -311,7 +331,7 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
                 if !hit_count < 10 {
                     spikes.push((p1, s1, s2));
                 }
-                let scale_2 = -((random::<u64>() % 12 + 50) as f32);
+                let scale_2 = -((random::<u64>() % 16 + 8) as f32);
                 let s3 = Point::from_vec2(p1.as_vec2() + delta * scale_2 / 2.0);
                 let s4 = Point::from_vec2(p1.as_vec2() + delta * scale_2);
                 let s0 = [p1, s3, s4];
@@ -342,7 +362,35 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
         };
         city.roads.push(r);
     }
-
+    'outer: loop {
+        let mut should_remove = None;
+        for (idx, i) in city.roads.iter().enumerate() {
+            let mut offset = 0i64;
+            for p in &i.points {
+                let mut min_dist = 1000000i64;
+                for (idx2, j) in city.roads.iter().enumerate() {
+                    if idx == idx2 {
+                        continue;
+                    }
+                    for k in 0..j.points.len() - 1 {
+                        let dx = distance_to_line_segmment(*p, j.points[k], j.points[k + 1]) as i64;
+                        if dx < min_dist {
+                            min_dist = dx;
+                        }
+                    }
+                }
+                offset += min_dist;
+            }
+            if (offset as f64) * (i.points.len() as f64) < 100.0 {
+                should_remove = Some(idx);
+            }
+        }
+        if let Some(idx) = should_remove {
+            city.roads.remove(idx);
+            continue 'outer;
+        }
+        break;
+    }
     //let hit_set = std::sync::Mutex::new(HashSet::new());
     for r in (0..500).rev() {
         let tmp_queue: Vec<(Point, f32)> = (0..628)
@@ -371,21 +419,20 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
                 let mut theta = 0.0;
                 let mut closest_distance = 5000;
                 for i in &city.roads {
-                    for j in 0..i.points.len() - 1 {
-                        let dist = distance_to_line_segmment(p, i.points[j], i.points[j + 1]);
+                    for j in 1..i.points.len() {
+                        let dist = distance_to_line_segmment(p, i.points[j], i.points[j - 1]);
                         if dist < closest_distance {
                             closest_distance = dist;
                             let delta =
-                                (i.points[j + 1].as_vec2() - i.points[j].as_vec2()).normalized();
-                            theta =
-                                delta.angle_to(Vector2::new(1.0, 0.0)) + std::f32::consts::PI / 4.;
+                                (i.points[j - 1].as_vec2() - i.points[j].as_vec2()).normalized();
+                            theta = delta.angle_to(Vector2::new(1.0, 0.0));
                         }
                         if dist < 5 {
                             return None;
                         }
                     }
                 }
-                if closest_distance < 10 {
+                if closest_distance < 14 {
                     Some((p, theta))
                 } else {
                     None
@@ -403,18 +450,16 @@ impl City {
     pub fn can_place_building(&self, building: &Building) -> bool {
         let vs = self
             .buildings
-            .par_iter()
-            .map(|i| {
-                i.bounds.check_collision(&building.bounds)
-            })
-            .find_first(|x| *x)
+            .iter()
+            .map(|i| i.bounds.check_collision(&building.bounds))
+            .find(|x| *x)
             .is_some();
         if vs {
             return false;
         }
         let vs: bool = self
             .roads
-            .par_iter()
+            .iter()
             .map(|i| {
                 for j in 0..i.points.len() - 1 {
                     let p0 = i.points[j];
@@ -425,7 +470,7 @@ impl City {
                 }
                 true
             })
-            .find_first(|x| !*x)
+            .find(|x| !*x)
             .is_some();
         !vs
     }
