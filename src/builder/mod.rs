@@ -7,17 +7,15 @@ use std::{
 use raylib::{
     RaylibHandle, RaylibThread,
     color::Color,
-    drawing::{RaylibDraw, RaylibTextureModeExt},
+    drawing::RaylibDraw,
     math::Vector2,
     texture::{RenderTexture2D, Texture2D},
-    window,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
     engine::Col,
     libgui::{Bounds, GUI, Point, ScrollBoxData},
-    utils::Heap,
 };
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DrawObject {
@@ -80,7 +78,7 @@ impl Layer {
     pub fn new(handle: &mut RaylibHandle, thread: &RaylibThread) -> Self {
         Self {
             values: Arc::new(Mutex::new(
-                handle.load_render_texture(&thread, 1024, 1024).unwrap(),
+                handle.load_render_texture(thread, 1024, 1024).unwrap(),
             )),
             text_blocks: Vec::new(),
             widgets: Vec::new(),
@@ -106,7 +104,7 @@ pub fn noise_1d(x: i32, y: i32, scale: f32, rsyn: &str) -> f32 {
             Vector2::new(theta.cos(), theta.sin())
         } else {
             let theta_0 = rand::random::<u32>() % 62_831;
-            let theta = (theta_0 as f32 / 10_000.);
+            let theta = theta_0 as f32 / 10_000. ;
             map.insert(ist, theta);
             Vector2::new(theta.cos(), theta.sin())
         }
@@ -181,8 +179,8 @@ pub fn blend_hsv(color0: Color, color1: Color, amount: f32) -> Color {
     let c0_hsv = color0.color_to_hsv();
     let c1_hsv = color1.color_to_hsv();
     let l = c0_hsv * (1. - amount) + c1_hsv * amount;
-    let out = Color::color_from_hsv(l.x, l.y, l.z);
-    out
+    
+    Color::color_from_hsv(l.x, l.y, l.z)
 }
 
 pub fn blend_3_way(color0: Color, color1: Color, color2: Color, amount: f32) -> Color {
@@ -253,8 +251,8 @@ impl DrawingTexture {
     }
 }
 pub fn load_token_table(
-    handle: &mut RaylibHandle,
-    thread: &RaylibThread,
+    _handle: &mut RaylibHandle,
+    _thread: &RaylibThread,
 ) -> BTreeMap<Arc<str>, Arc<Texture2D>> {
     BTreeMap::new()
 }
@@ -490,8 +488,8 @@ impl DrawingState {
                     });
                 }
             });
-            ns.canvas(1024, 1024, |bounds, state, cmds, handle, thread| {
-                let mouse_pressed =
+            ns.canvas(1024, 1024, |bounds, state, cmds, handle, _thread| {
+                let _mouse_pressed =
                     handle.is_mouse_button_pressed(raylib::ffi::MouseButton::MOUSE_BUTTON_LEFT);
                 let mouse_released =
                     handle.is_mouse_button_released(raylib::ffi::MouseButton::MOUSE_BUTTON_LEFT);
@@ -504,11 +502,11 @@ impl DrawingState {
                     let start_y = bounds.y;
                     let dx = mouse_pos.x - start_x as f32;
                     let dy = mouse_pos.y - start_y as f32;
-                    let p = Point {
+                    
+                    Point {
                         x: (dx * rat).round() as i32,
                         y: (dy * rat).round() as i32,
-                    };
-                    p
+                    }
                 };
                 cmds.draw_rectangle(0, 0, 1024, 1024, Color::BLACK);
                 for i in 0..16 {
@@ -618,12 +616,12 @@ impl DrawingState {
                                 if !state.drawing.layers[state.current_layer].widgets[x]
                                     .bounds
                                     .intersects(
-                                        &(&Bounds {
+                                        &Bounds {
                                             x: 0,
                                             y: 0,
                                             width: 1024,
                                             height: 1024,
-                                        }),
+                                        } ,
                                     )
                                     || state.drawing.layers[state.current_layer].widgets[x]
                                         .bounds
@@ -777,9 +775,8 @@ impl DrawingState {
                             ) {
                                 state.mode = DrawingStateMode::SelectMode;
                             } else {
-                                if let Some(x) = state.token_table.get(&state.token_to_place) {
-                                } else {
-                                }
+                                if let Some(_x) = state.token_table.get(&state.token_to_place) {
+                                } 
                             }
                         }
                     }

@@ -1,12 +1,10 @@
-use std::{collections::HashSet};
+use std::collections::HashSet;
 
-use libc::rand;
 use rand::{random, seq::SliceRandom};
 use raylib::{color::Color, math::Rectangle, texture::Image};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use serde::de::{self, value};
 
-use crate::libgui::{Bounds, Point, Widget};
+use crate::libgui::Point;
 pub const UP: usize = 0;
 pub const DOWN: usize = 1;
 pub const LEFT: usize = 2;
@@ -67,7 +65,7 @@ impl Floor {
     }
     pub fn get(&self, x: i32, y: i32) -> Tile {
         if x >= 0 && x < self.width && y < self.height && y >= 0 {
-            return self.tiles[(y * self.width + x) as usize].clone();
+            self.tiles[(y * self.width + x) as usize].clone()
         } else {
             todo!()
         }
@@ -106,7 +104,7 @@ impl Floor {
             *v = value;
             Ok(())
         } else {
-            return Err(value);
+            Err(value)
         }
     }
 
@@ -287,35 +285,31 @@ pub fn post_process_floor(floor: &mut Floor, width: i32, height: i32, circular: 
         let width = (i.max_x - i.min_x).abs();
         let x_pos = i.min_x - 1;
         for dy in point.y..point.y + height {
-            if let Some(t) = floor.get_checked(x_pos, dy) {
-                if t.is_occupied {
+            if let Some(t) = floor.get_checked(x_pos, dy)
+                && t.is_occupied {
                     border_positions.push(Point { x: x_pos, y: dy })
                 }
-            }
         }
         let x_pos = point.x + width + 1;
         for dy in point.y..point.y + height {
-            if let Some(t) = floor.get_checked(x_pos, dy) {
-                if t.is_occupied {
+            if let Some(t) = floor.get_checked(x_pos, dy)
+                && t.is_occupied {
                     border_positions.push(Point { x: x_pos, y: dy })
                 }
-            }
         }
         let y_pos = point.y - 1;
         for dx in point.x..point.x + width {
-            if let Some(t) = floor.get_checked(dx, y_pos) {
-                if t.is_occupied {
+            if let Some(t) = floor.get_checked(dx, y_pos)
+                && t.is_occupied {
                     border_positions.push(Point { x: dx, y: y_pos })
                 }
-            }
         }
         let y_pos = point.y + height + 1;
         for dx in point.x..point.x + width {
-            if let Some(t) = floor.get_checked(dx, y_pos) {
-                if t.is_occupied {
+            if let Some(t) = floor.get_checked(dx, y_pos)
+                && t.is_occupied {
                     border_positions.push(Point { x: dx, y: y_pos })
                 }
-            }
         }
         floor.rooms[j].boundary_positions = border_positions;
     }
@@ -418,11 +412,10 @@ pub fn post_process_floor(floor: &mut Floor, width: i32, height: i32, circular: 
                         if dx == 0 && dy == 0 {
                             continue;
                         }
-                        if let Some(t) = floor.get_checked(j + dx, i + dy) {
-                            if !t.is_occupied {
+                        if let Some(t) = floor.get_checked(j + dx, i + dy)
+                            && !t.is_occupied {
                                 count += 1;
                             }
-                        }
                     }
                     if count > 0 {
                         floor.get_mut(j, i).is_occupied = false;
@@ -436,7 +429,7 @@ pub fn post_process_floor(floor: &mut Floor, width: i32, height: i32, circular: 
             break 'outer;
         }
     }
-    if floor.rooms.len() == 0 {
+    if floor.rooms.is_empty() {
         return;
     }
     connect_rooms(floor);
@@ -454,11 +447,10 @@ pub fn generate_room(floor: &mut Floor, previous: &Floor, has_another_room: bool
                             x: k.x + dx,
                             y: k.y + dy,
                         };
-                        if let Some(t) = floor.get_checked(p.x, p.y) {
-                            if !t.is_occupied {
+                        if let Some(t) = floor.get_checked(p.x, p.y)
+                            && !t.is_occupied {
                                 x.insert(p);
                             }
-                        }
                     }
                 }
             }
@@ -485,7 +477,7 @@ pub fn generate_room(floor: &mut Floor, previous: &Floor, has_another_room: bool
                     return Some(room);
                 }
             }
-            return None;
+            None
         })
         .collect();
     if r.is_empty() {
@@ -531,8 +523,8 @@ pub fn try_generate_room(
             for dx in -15..=15 {
                 for y in i.min_y..=i.max_y {
                     for x in i.min_x..=i.max_x {
-                        let d = ((point.x + dx - x) * (point.x + dx - x)
-                            + (point.y - y) * (point.y - y));
+                        let d = (point.x + dx - x) * (point.x + dx - x)
+                            + (point.y - y) * (point.y - y) ;
                         if d < dist {
                             dist = d;
                         }
@@ -542,8 +534,8 @@ pub fn try_generate_room(
             for dy in -15..=15 {
                 for y in i.min_y..=i.max_y {
                     for x in i.min_x..=i.max_x {
-                        let d = ((point.x - x) * (point.x - x)
-                            + (point.y + dy - y) * (point.y + dy - y));
+                        let d = (point.x - x) * (point.x - x)
+                            + (point.y + dy - y) * (point.y + dy - y) ;
                         if d < dist {
                             dist = d;
                         }
@@ -566,7 +558,7 @@ pub fn try_generate_room(
         bases.reserve(120);
         if lc < 1 {
             bases.clear();
-            for k in 2..=2 as i32 {
+            for k in 2..=2_i32 {
                 for j in 10..=30 {
                     bases.push((k, j));
                     bases.push((j, k));
@@ -611,39 +603,35 @@ pub fn try_generate_room(
             let mut border_positions = Vec::new();
             let x_pos = point.x - 1;
             for dy in point.y..point.y + height {
-                if let Some(t) = floor.get_checked(x_pos, dy) {
-                    if t.is_occupied {
+                if let Some(t) = floor.get_checked(x_pos, dy)
+                    && t.is_occupied {
                         hit_other_count += 1;
                         border_positions.push(Point { x: x_pos, y: dy })
                     }
-                }
             }
             let x_pos = point.x + width;
             for dy in point.y..point.y + height {
-                if let Some(t) = floor.get_checked(x_pos, dy) {
-                    if t.is_occupied {
+                if let Some(t) = floor.get_checked(x_pos, dy)
+                    && t.is_occupied {
                         hit_other_count += 1;
                         border_positions.push(Point { x: x_pos, y: dy })
                     }
-                }
             }
             let y_pos = point.y - 1;
             for dx in point.x..point.x + width {
-                if let Some(t) = floor.get_checked(dx, y_pos) {
-                    if t.is_occupied {
+                if let Some(t) = floor.get_checked(dx, y_pos)
+                    && t.is_occupied {
                         hit_other_count += 1;
                         border_positions.push(Point { x: dx, y: y_pos })
                     }
-                }
             }
             let y_pos = point.y + height;
             for dx in point.x..point.x + width {
-                if let Some(t) = floor.get_checked(dx, y_pos) {
-                    if t.is_occupied {
+                if let Some(t) = floor.get_checked(dx, y_pos)
+                    && t.is_occupied {
                         hit_other_count += 1;
                         border_positions.push(Point { x: dx, y: y_pos })
                     }
-                }
             }
             if (hit_other_count < 5) && has_another_room {
                 continue 'outer;
@@ -658,7 +646,7 @@ pub fn try_generate_room(
                 connections: Vec::new(),
             });
         }
-        if values.len() != 0 {
+        if !values.is_empty() {
             break 'gt;
         } else if first {
             first = false;
@@ -702,9 +690,7 @@ pub fn connect_rooms_old(floor: &mut Floor) {
                 connected_set = best_connections.clone();
                 break 'outer;
             }
-            for j in &mut red_count {
-                *j = 0;
-            }
+            red_count.fill(0);
             if connected_set.len() > best_count {
                 best_count = connected_set.len();
                 best_connections = connected_set.clone();
@@ -865,23 +851,22 @@ pub fn connect_rooms(floor: &mut Floor) {
                 if reachable_set.contains(&p) {
                     continue;
                 }
-                if let Some(g) = floor.get_checked(p.x, p.y) {
-                    if g.is_occupied && !g.is_wall {
+                if let Some(g) = floor.get_checked(p.x, p.y)
+                    && g.is_occupied && !g.is_wall {
                         flood(floor, p, reachable_set);
                     }
-                }
             }
         }
     }
     let mut max_set = 0;
-    if floor.rooms.len() == 0 {
+    if floor.rooms.is_empty() {
         return;
     }
     let mut max_reachable = HashSet::new();
     for i in 0..floor.rooms.len() {
         let p0 = floor.rooms[i].points[0];
         let mut reachable_from = HashSet::new();
-        flood(&floor, p0, &mut reachable_from);
+        flood(floor, p0, &mut reachable_from);
         if reachable_from.len() > max_reachable.len() {
             max_reachable = reachable_from;
             max_set = i;
@@ -913,7 +898,7 @@ pub fn connect_rooms(floor: &mut Floor) {
             }
             if reachable_set.contains(&j)
                 && reachable_set.contains(&j)
-                && (random::<u32>() % 4 == 0)
+                && random::<u32>().is_multiple_of(4)
             {
                 continue;
             }

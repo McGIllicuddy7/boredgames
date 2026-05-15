@@ -17,7 +17,6 @@ use raylib::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::engine::Col;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Point {
@@ -2328,13 +2327,11 @@ impl<State> Widget<State> {
                     if (handle.is_key_down(raylib::ffi::KeyboardKey::KEY_LEFT_CONTROL)
                         || handle.is_key_down(raylib::ffi::KeyboardKey::KEY_LEFT_SUPER))
                         && handle.is_key_pressed(raylib::ffi::KeyboardKey::KEY_V)
-                    {
-                        if let Ok(x) = handle.get_clipboard_text() {
+                        && let Ok(x) = handle.get_clipboard_text() {
                             for i in x.chars() {
                                 text.push(i);
                             }
                         }
-                    }
                 }
             }
             Widget::Rectangle { bounds, color } => {

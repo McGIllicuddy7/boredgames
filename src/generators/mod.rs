@@ -6,7 +6,27 @@ use crate::libgui::{Bounds, Point};
 
 pub mod buildings;
 pub mod city;
+
+//https://www.geeksforgeeks.org/dsa/minimum-distance-from-a-point-to-the-line-segment-using-vectors/
 pub fn distance_to_line_segmment(point: Point, start: Point, end: Point) -> i32 {
+    /*
+      let x0 = point.x as f32;
+    let x1 = end.x as f32;
+    let x2 = start.x as f32;
+    let y0 = point.y as f32;
+    let y1 = end.y as f32;
+    let y2 = start.y as f32;
+    let a = ((y2 - y1) * x0 - (x2 - x1) * y0 + x2 * y1 - y2 * x1).abs();
+    let b = ((y2 - y1) * (y2 - y1) + (x2 - x1) * (x2 - x1)).sqrt();
+    let d1 = point.as_vec2().distance_to(start.as_vec2());
+    let d2 = point.as_vec2().distance_to(end.as_vec2());
+    if b.abs() < 0.001 {
+        return min(d1 as i32, d2 as i32);
+    }
+    let d0 = a / b;
+    min(d0 as i32, min(d1 as i32, d2 as i32))
+     */
+    /*
     let mut base = Vector2::new(start.x as f32, start.y as f32);
     let delta = Vector2::new((end.x - start.x) as f32, (end.y - start.y) as f32).normalized();
     let count = (Vector2::new((end.x - start.x) as f32, (end.y - start.y) as f32))
@@ -22,6 +42,54 @@ pub fn distance_to_line_segmment(point: Point, start: Point, end: Point) -> i32 
         }
     }
     min_dist as i32
+    */
+    let E = point.as_vec2();
+    let A = start.as_vec2();
+    let B = end.as_vec2();
+    let AB = end.as_vec2() - start.as_vec2();
+
+    // vector BP
+    let BE = point.as_vec2() - end.as_vec2();
+    // BE.F = E.F - B.F;
+    //BE.S = E.S - B.S;
+
+    // vector AP
+    let AE = point.as_vec2() - start.as_vec2();
+    //AE.F = E.F - A.F,
+    //AE.S = E.S - A.S;
+
+    // Calculating the dot product
+    let AB_BE = AB.x * BE.x + AB.y * BE.y;
+    let AB_AE = AB.x * AE.x + AB.y * AE.y;
+
+    // Minimum distance from
+    // point E to the line segment
+    let mut reqAns = 0.0;
+
+    // Case 1
+    if AB_BE > 0. {
+        // Finding the magnitude
+        let x = E.x - B.x;
+        let y = E.y - B.y;
+        reqAns = (x * x + y * y).sqrt();
+    }
+    // Case 2
+    else if AB_AE < 0. {
+        let x = E.x - A.x;
+        let y = E.y - A.y;
+        reqAns = (x * x + y * y).sqrt();
+    }
+    // Case 3
+    else {
+        // Finding the perpendicular distance
+        let x1 = AB.x;
+        let y1 = AB.y;
+        let x2 = AE.x;
+        let y2 = AE.y;
+        let md = (x1 * x1 + y1 * y1).sqrt();
+        reqAns = (x1 * y2 - y1 * x2).abs() / md;
+    }
+    reqAns as i32
 }
 //https://stackoverflow.com/questions/78588965/how-to-sort-a-vector-in-rust-that-only-has-partial-ordering
 pub fn partialordsort<T>(mut items: &mut [T], mut cmp: impl FnMut(&T, &T) -> Ordering) {
@@ -72,9 +140,9 @@ pub fn distance_between_line_segments(
             ls0_end,
         )
     };
-    let mut base = Vector2::new(start.x as f32, start.y as f32);
-    let delta = Vector2::new((end.x - start.x) as f32, (end.y - start.y) as f32).normalized();
-    let count = (Vector2::new((end.x - start.x) as f32, (end.y - start.y) as f32))
+    let mut base = Vector2::new(start.x, start.y);
+    let delta = Vector2::new(end.x - start.x, end.y - start.y).normalized();
+    let count = (Vector2::new(end.x - start.x, end.y - start.y))
         .length()
         .ceil() as u32;
     let mut min_dist = distance_to_line_segmment(
@@ -351,6 +419,12 @@ pub struct Queue<T> {
     values: Vec<T>,
     compare: Box<dyn Fn(&T, &T) -> std::cmp::Ordering>,
 }
+impl<T: PartialOrd> Default for Queue<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: PartialOrd> Queue<T> {
     pub fn new() -> Self {
         Self {
@@ -375,7 +449,7 @@ impl<T> Queue<T> {
     }
 
     pub fn insert(&mut self, value: T) {
-        for idx in 0..self.values.len() {
+        if let Some(idx) = (0..self.values.len()).next() {
             if (self.compare)(&value, &self.values[idx]) == std::cmp::Ordering::Less {
                 self.values.insert(idx, value);
             }

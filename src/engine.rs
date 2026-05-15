@@ -419,7 +419,7 @@ impl ClientState {
                 gui.p2("levels");
                 gui.scroll_box(150, &ns.level_select_scroll_box_data, |gui| {
                     gui.p1("");
-                    for (i, _) in &ns.levels {
+                    for i in ns.levels.keys() {
                         let nm = i.clone();
                         gui.button_1(i, move |state| {
                             state.level_to_load = Some(nm.clone());
@@ -635,7 +635,7 @@ impl ClientState {
                 let mut nm = state.next_name();
                 match &mut state.client_mode {
                     ClientMode::SelectMode { selected_object } => {
-                        if state.state.objects.contains_key(&selected_object)
+                        if state.state.objects.contains_key(selected_object)
                             && (handle.is_key_pressed(raylib::ffi::KeyboardKey::KEY_DELETE)
                                 || handle.is_key_pressed(raylib::ffi::KeyboardKey::KEY_BACKSPACE))
                         {
@@ -748,21 +748,18 @@ impl ClientState {
                                 };
                                 g.bounds.x = p0_x;
                                 g.bounds.y = p0_y;
-                                match &mut g.data {
-                                    ObjectData::DrawingSpline {
+                                if let ObjectData::DrawingSpline {
                                         tint,
                                         points,
                                         rotation,
                                         width: _,
-                                    } => {
-                                        let delta_x = (p0_x - base.x);
-                                        let delta_y = (p0_y - base.y);
-                                        for i in points.iter_mut() {
-                                            i.x += delta_x * dim;
-                                            i.y += delta_y * dim;
-                                        }
+                                    } = &mut g.data {
+                                    let delta_x = (p0_x - base.x);
+                                    let delta_y = (p0_y - base.y);
+                                    for i in points.iter_mut() {
+                                        i.x += delta_x * dim;
+                                        i.y += delta_y * dim;
                                     }
-                                    _ => {}
                                 }
                                 update_stack.push_back(selected_object.clone());
                                 *selected_object = ObjectId::new_invalid();
@@ -772,7 +769,7 @@ impl ClientState {
                                 let mut new_selected = ObjectId::new_invalid();
                                 let mut list = state.state.render_list.clone();
                                 for id in sorted_objects.iter().rev() {
-                                    let Some(i) = state.state.objects.get_mut(&id) else {
+                                    let Some(i) = state.state.objects.get_mut(id) else {
                                         continue;
                                     };
                                     if i.layer != ns.selected_layer {
@@ -797,7 +794,7 @@ impl ClientState {
                                 let mut deleted = Vec::new();
                                 let mut list = state.state.render_list.clone();
                                 for id in sorted_objects.iter().rev() {
-                                    let Some(i) = state.state.objects.get_mut(&id) else {
+                                    let Some(i) = state.state.objects.get_mut(id) else {
                                         continue;
                                     };
                                     if i.layer != ns.selected_layer {
@@ -821,7 +818,7 @@ impl ClientState {
                             }
                             if handle.is_key_pressed(raylib::ffi::KeyboardKey::KEY_B) {
                                 for id in sorted_objects.iter().rev() {
-                                    let Some(i) = state.state.objects.get_mut(&id) else {
+                                    let Some(i) = state.state.objects.get_mut(id) else {
                                         continue;
                                     };
                                     if i.layer != ns.selected_layer {
@@ -845,7 +842,7 @@ impl ClientState {
                                 let mut list = state.state.render_list.clone();
                                 let mut n = state.next_name();
                                 for id in sorted_objects.iter().rev() {
-                                    let Some(i) = state.state.objects.get_mut(&id) else {
+                                    let Some(i) = state.state.objects.get_mut(id) else {
                                         continue;
                                     };
                                     if i.layer != ns.selected_layer {
@@ -859,7 +856,7 @@ impl ClientState {
                                         height: i.bounds.height * dim,
                                     };
                                     if bounds_act.contains_point(mouse_pos) {
-                                        i.name = n.clone().into();
+                                        i.name = n.clone();
                                         update_stack.push_back(id.clone());
                                         break;
                                     }
@@ -871,7 +868,7 @@ impl ClientState {
                                 let mut list = state.state.render_list.clone();
                                 let mut n = state.next_name();
                                 for id in sorted_objects.iter().rev() {
-                                    let Some(i) = state.state.objects.get_mut(&id) else {
+                                    let Some(i) = state.state.objects.get_mut(id) else {
                                         continue;
                                     };
                                     if i.layer != ns.selected_layer {
@@ -902,7 +899,7 @@ impl ClientState {
                                 let mut list = state.state.render_list.clone();
                                 let mut n = state.next_name();
                                 for id in sorted_objects.iter().rev() {
-                                    let Some(i) = state.state.objects.get_mut(&id) else {
+                                    let Some(i) = state.state.objects.get_mut(id) else {
                                         continue;
                                     };
                                     if i.layer != ns.selected_layer {
@@ -933,7 +930,7 @@ impl ClientState {
                                 let mut list = state.state.render_list.clone();
                                 let mut n = state.next_name();
                                 for id in sorted_objects.iter().rev() {
-                                    let Some(i) = state.state.objects.get_mut(&id) else {
+                                    let Some(i) = state.state.objects.get_mut(id) else {
                                         continue;
                                     };
                                     if i.layer != ns.selected_layer {
@@ -1463,9 +1460,7 @@ impl ClientState {
             let cols: Vec<u8> = c
                 .split(",")
                 .map(|i| i.trim())
-                .map(|i| i.parse::<u8>())
-                .filter(|i| i.is_ok())
-                .map(|i| i.unwrap())
+                .flat_map(|i| i.parse::<u8>())
                 .collect();
             if cols.len() == 4 {
                 self.gui_state.drawing_color = Col {
@@ -1514,8 +1509,8 @@ impl ClientState {
                 data: EventData::RequestEntireState,
             });
         }
-        if let Some(k) = self.gui_state.level_to_load.as_ref() {
-            if let Some(st) = self.gui_state.levels.get(k) {
+        if let Some(k) = self.gui_state.level_to_load.as_ref()
+            && let Some(st) = self.gui_state.levels.get(k) {
                 let mut new_state = st.clone();
                 new_state.people = self.gui_state.state.people.clone();
                 new_state.images = self.gui_state.state.images.clone();
@@ -1526,8 +1521,7 @@ impl ClientState {
                     data: EventData::EntireState { state: new_state },
                 });
             }
-        }
-        if self.gui_state.tick % 600 == 0 {
+        if self.gui_state.tick.is_multiple_of(600) {
             update_config(self);
             if (std::fs::Metadata::modified(
                 &std::fs::metadata("./board_games_config/images").unwrap(),
@@ -1548,7 +1542,7 @@ impl ClientState {
                 self.gui_state.levels = config_get_levels();
                 let t2 = config_get_images();
                 for i in &t2 {
-                    if !self.gui_state.state.images.contains_key(&*i.0) {
+                    if !self.gui_state.state.images.contains_key(i.0) {
                         events.push(Event {
                             source: self.gui_state.id.clone(),
                             data: EventData::UploadImage {
@@ -1966,8 +1960,8 @@ pub async fn game_loop(handle: &mut RaylibHandle, thread: &RaylibThread) {
             });
             gui.container(400, |gui| {
                 let adr = address().0;
-                gui.p1(format!("local address"));
-                gui.p1(format!("{}", adr));
+                gui.p1("local address");
+                gui.p1(&adr);
                 gui.p1(format!(
                     "current address to connect to:{}",
                     match &state.to_join {
@@ -2097,7 +2091,7 @@ pub async fn game_join(
                 std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "connnection refused");
             let mut out = None;
             for i in list {
-                match TcpStream::connect((i.clone(), PORT)).await {
+                match TcpStream::connect((*i, PORT)).await {
                     Ok(x) => {
                         name = i.to_string();
                         out = Some(x);
@@ -2307,7 +2301,7 @@ pub async fn socket_loop(listener: TcpListener, stream: BPipe<TcpStream>, done: 
         if let Ok(Ok(x)) = output {
             stream.send(x.0);
         }
-        if let Some(_) = done.try_receive() {
+        if done.try_receive().is_some() {
             break;
         }
     }
@@ -2410,13 +2404,13 @@ impl TImage {
                 };
             }
         }
-        let g = TImage {
+        
+        TImage {
             width: img.width(),
             height: img.height(),
             values: tmp,
             texture: None,
-        };
-        g
+        }
     }
 
     pub fn ensure_renderable(
@@ -2452,7 +2446,7 @@ impl TImage {
 
 impl UserConfig {
     pub fn update_info(&mut self, state: &ClientState) {
-        if let Some(x) = state.con.as_ref().map(|i| i.get_ip_address()).flatten() {
+        if let Some(x) = state.con.as_ref().and_then(|i| i.get_ip_address()) {
             if let Some(v) = self
                 .recent_connections
                 .get_mut(&state.gui_state.state.owner_name)

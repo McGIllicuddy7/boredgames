@@ -1,11 +1,9 @@
-use core::sync;
 use std::{
     collections::{HashMap, VecDeque},
     hash::Hash,
     marker::PhantomData,
     net::IpAddr,
     ops::{Deref, DerefMut},
-    str::FromStr,
     sync::{Arc, Weak, atomic::AtomicBool},
     task::Waker,
     time::Duration,
@@ -994,7 +992,7 @@ impl<
     }
 
     pub fn get(&self, key: &Key) -> Option<Value> {
-        self.take_lock().get(key).map(|i| i.clone())
+        self.take_lock().get(key).cloned()
     }
 
     pub fn set(&self, key: Key, value: Value) {
@@ -1137,11 +1135,10 @@ impl<Value: Serialize + DeserializeOwned + Clone> Table<Arc<str>, Value> {
                     extension
                 };
                 if let Some(ext) = pth.extension() {
-                    if let Some(ext) = ext.to_str() {
-                        if ext == extension {
+                    if let Some(ext) = ext.to_str()
+                        && ext == extension {
                             should_load = true;
                         }
-                    }
                 } else {
                     if extension.is_empty() {
                         should_load = true;
@@ -1156,8 +1153,7 @@ impl<Value: Serialize + DeserializeOwned + Clone> Table<Arc<str>, Value> {
                             return Err(std::io::Error::new(
                                 std::io::ErrorKind::InvalidData,
                                 "could not deserialize",
-                            )
-                            .into());
+                            ));
                         };
                         x
                     };
@@ -1182,7 +1178,7 @@ impl<Value: Serialize + DeserializeOwned + Clone> Table<Arc<str>, Value> {
             } else {
                 key.as_ref()
             };
-            let name = path.to_string() + "/" + &k + extension;
+            let name = path.to_string() + "/" + k + extension;
             if let Some(func) = custom.as_mut() {
                 func(name.clone().into(), value).unwrap();
             } else {
@@ -1190,8 +1186,7 @@ impl<Value: Serialize + DeserializeOwned + Clone> Table<Arc<str>, Value> {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
                         "could not serialize",
-                    )
-                    .into());
+                    ));
                 };
                 std::fs::write(name, v)?;
             }
@@ -1204,6 +1199,12 @@ impl<Value: Serialize + DeserializeOwned + Clone> Table<Arc<str>, Value> {
 pub struct PriorityQueue<T: PartialEq> {
     inner: VecDeque<T>,
 }
+impl<T: PartialEq> Default for PriorityQueue<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: PartialEq> PriorityQueue<T> {
     pub fn new() -> Self {
         Self {
@@ -1299,7 +1300,7 @@ impl<T: Serialize + DeserializeOwned + Default + Send + Sync> Config<T> {
             } catch |_x| {
                 println!("caught");
                 errored = true;
-                if let Err(_) = std::fs::read_dir(self.directory){
+                if std::fs::read_dir(self.directory).is_err(){
                     std::fs::create_dir(self.directory).unwrap();
                     for i in self.sub_folders{
                         std::fs::create_dir(self.directory.to_string()+"/"+i).unwrap();
@@ -1419,6 +1420,12 @@ impl<'a, T> std::ops::DerefMut for HeapRefGuard<'a, T> {
 pub struct Heap<T> {
     ptr: Arc<HeapInner<T>>,
 }
+impl<T> Default for Heap<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> Heap<T> {
     pub fn new() -> Self {
         Self {
@@ -1456,29 +1463,26 @@ impl<T> Heap<T> {
 
     pub async fn free(&self, ptr: HeapRef<T>) {
         let mut g = self.ptr.values.lock().await;
-        if let Some(x) = g.get_mut(ptr.index as usize) {
-            if x.ptr.is_some() && x.generation == ptr.generation {
+        if let Some(x) = g.get_mut(ptr.index as usize)
+            && x.ptr.is_some() && x.generation == ptr.generation {
                 x.ptr = None;
             }
-        }
     }
 
     pub async fn realloc(&self, ptr: &HeapRef<T>, value: T) {
         let mut g = self.ptr.values.lock().await;
-        if let Some(x) = g.get_mut(ptr.index as usize) {
-            if x.generation == ptr.generation {
+        if let Some(x) = g.get_mut(ptr.index as usize)
+            && x.generation == ptr.generation {
                 x.ptr = Some(Arc::new(Mutex::new(value)));
             }
-        }
     }
 
     pub async fn is_valid_ptr(&self, ptr: &HeapRef<T>) -> bool {
         let mut g = self.ptr.values.lock().await;
-        if let Some(x) = g.get_mut(ptr.index as usize) {
-            if x.generation == ptr.generation {
+        if let Some(x) = g.get_mut(ptr.index as usize)
+            && x.generation == ptr.generation {
                 return true;
             }
-        }
         false
     }
 
@@ -1505,7 +1509,7 @@ impl<T> Heap<T> {
             ptr: Some(Arc::new(Mutex::new(value))),
             generation: 1,
         };
-        let idx = guard.len() as usize;
+        let idx = guard.len();
         guard.push(value);
         HeapRef {
             parent: Arc::downgrade(&self.ptr),
@@ -1516,29 +1520,26 @@ impl<T> Heap<T> {
 
     pub fn free_blocking(&self, ptr: HeapRef<T>) {
         let mut g = self.ptr.values.blocking_lock();
-        if let Some(x) = g.get_mut(ptr.index as usize) {
-            if x.ptr.is_some() && x.generation == ptr.generation {
+        if let Some(x) = g.get_mut(ptr.index as usize)
+            && x.ptr.is_some() && x.generation == ptr.generation {
                 x.ptr = None;
             }
-        }
     }
 
     pub fn realloc_blocking(&self, ptr: &HeapRef<T>, value: T) {
         let mut g = self.ptr.values.blocking_lock();
-        if let Some(x) = g.get_mut(ptr.index as usize) {
-            if x.generation == ptr.generation {
+        if let Some(x) = g.get_mut(ptr.index as usize)
+            && x.generation == ptr.generation {
                 x.ptr = Some(Arc::new(Mutex::new(value)));
             }
-        }
     }
 
     pub fn is_valid_ptr_blocking(&self, ptr: &HeapRef<T>) -> bool {
         let mut g = self.ptr.values.blocking_lock();
-        if let Some(x) = g.get_mut(ptr.index as usize) {
-            if x.generation == ptr.generation {
+        if let Some(x) = g.get_mut(ptr.index as usize)
+            && x.generation == ptr.generation {
                 return true;
             }
-        }
         false
     }
 }
@@ -1564,11 +1565,10 @@ impl<T> HeapRef<T> {
             return false;
         };
         let mut g = parent.values.lock().await;
-        if let Some(x) = g.get_mut(self.index as usize) {
-            if x.generation == self.generation {
+        if let Some(x) = g.get_mut(self.index as usize)
+            && x.generation == self.generation {
                 return true;
             }
-        }
         false
     }
 
@@ -1655,6 +1655,12 @@ impl<T> Clone for WeakHeap<T> {
         }
     }
 }
+impl<T> Default for WeakHeap<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> WeakHeap<T> {
     pub fn new() -> Self {
         Self { ptr: Weak::new() }
@@ -1690,22 +1696,20 @@ impl<T> WeakHeap<T> {
     pub async fn try_free(&self, ptr: HeapRef<T>) -> Option<()> {
         let heap = self.ptr.upgrade()?;
         let mut g = heap.values.lock().await;
-        if let Some(x) = g.get_mut(ptr.index as usize) {
-            if x.ptr.is_some() && x.generation == ptr.generation {
+        if let Some(x) = g.get_mut(ptr.index as usize)
+            && x.ptr.is_some() && x.generation == ptr.generation {
                 x.ptr = None;
             }
-        }
         Some(())
     }
 
     pub async fn try_realloc(&self, ptr: &HeapRef<T>, value: T) -> Option<()> {
         let heap = self.ptr.upgrade()?;
         let mut g = heap.values.lock().await;
-        if let Some(x) = g.get_mut(ptr.index as usize) {
-            if x.generation == ptr.generation {
+        if let Some(x) = g.get_mut(ptr.index as usize)
+            && x.generation == ptr.generation {
                 x.ptr = Some(Arc::new(Mutex::new(value)));
             }
-        }
         Some(())
     }
 
@@ -1714,11 +1718,10 @@ impl<T> WeakHeap<T> {
             return false;
         };
         let mut g = heap.values.lock().await;
-        if let Some(x) = g.get_mut(ptr.index as usize) {
-            if x.generation == ptr.generation {
+        if let Some(x) = g.get_mut(ptr.index as usize)
+            && x.generation == ptr.generation {
                 return true;
             }
-        }
         false
     }
 
@@ -1758,7 +1761,7 @@ impl<T> WeakHeap<T> {
             ptr: Some(Arc::new(Mutex::new(value))),
             generation: 1,
         };
-        let idx = guard.len() as usize;
+        let idx = guard.len();
         guard.push(value);
         Some(HeapRef {
             parent: self.ptr.clone(),
@@ -1770,22 +1773,20 @@ impl<T> WeakHeap<T> {
     pub fn try_free_blocking(&self, ptr: HeapRef<T>) -> Option<()> {
         let heap = self.ptr.upgrade()?;
         let mut g = heap.values.blocking_lock();
-        if let Some(x) = g.get_mut(ptr.index as usize) {
-            if x.ptr.is_some() && x.generation == ptr.generation {
+        if let Some(x) = g.get_mut(ptr.index as usize)
+            && x.ptr.is_some() && x.generation == ptr.generation {
                 x.ptr = None;
             }
-        }
         Some(())
     }
 
     pub fn try_realloc_blocking(&self, ptr: &HeapRef<T>, value: T) -> Option<()> {
         let heap = self.ptr.upgrade()?;
         let mut g = heap.values.blocking_lock();
-        if let Some(x) = g.get_mut(ptr.index as usize) {
-            if x.generation == ptr.generation {
+        if let Some(x) = g.get_mut(ptr.index as usize)
+            && x.generation == ptr.generation {
                 x.ptr = Some(Arc::new(Mutex::new(value)));
             }
-        }
         Some(())
     }
 
@@ -1794,11 +1795,10 @@ impl<T> WeakHeap<T> {
             return false;
         };
         let mut g = heap.values.blocking_lock();
-        if let Some(x) = g.get_mut(ptr.index as usize) {
-            if x.generation == ptr.generation {
+        if let Some(x) = g.get_mut(ptr.index as usize)
+            && x.generation == ptr.generation {
                 return true;
             }
-        }
         false
     }
 
@@ -1818,6 +1818,12 @@ impl<T> WeakHeap<T> {
 pub struct StaticHeap<T> {
     inner: tokio::sync::Mutex<Option<Heap<T>>>,
 }
+impl<T> Default for StaticHeap<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> StaticHeap<T> {
     pub const fn new() -> Self {
         Self {
@@ -1899,7 +1905,7 @@ impl<'a, T> Iterator for HeapIterator<'a, T> {
             if guard[self.idx].ptr.is_some() {
                 let v = guard[self.idx].generation;
                 let out = HeapRef {
-                    parent: Arc::downgrade(&self.rf),
+                    parent: Arc::downgrade(self.rf),
                     index: self.idx as u64,
                     generation: v,
                 };
@@ -1919,7 +1925,7 @@ impl<'a, T> HeapIterator<'a, T> {
             if guard[self.idx].ptr.is_some() {
                 let v = guard[self.idx].generation;
                 let out = HeapRef {
-                    parent: Arc::downgrade(&self.rf),
+                    parent: Arc::downgrade(self.rf),
                     index: self.idx as u64,
                     generation: v,
                 };
