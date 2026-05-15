@@ -427,12 +427,12 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
                                 (i.points[j - 1].as_vec2() - i.points[j].as_vec2()).normalized();
                             theta = delta.angle_to(Vector2::new(1.0, 0.0));
                         }
-                        if dist < 5 {
+                        if dist < 4 {
                             return None;
                         }
                     }
                 }
-                if closest_distance < 14 {
+                if closest_distance < 12 {
                     Some((p, theta))
                 } else {
                     None
