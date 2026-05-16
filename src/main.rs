@@ -1,4 +1,3 @@
-
 use crate::generators::city::create_city;
 
 pub mod engine;
@@ -13,5 +12,5 @@ pub mod generators;
 pub async fn main() {
     let city = create_city(500);
     city.draw();
-    println!("{:#?}", city.buildings);
+    //  println!("{:#?}", city.buildings);
 }

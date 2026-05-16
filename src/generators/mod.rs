@@ -6,7 +6,7 @@ use crate::libgui::{Bounds, Point};
 
 pub mod buildings;
 pub mod city;
-
+pub mod utils;
 //https://www.geeksforgeeks.org/dsa/minimum-distance-from-a-point-to-the-line-segment-using-vectors/
 pub fn distance_to_line_segmment(point: Point, start: Point, end: Point) -> i32 {
     let e = point.as_vec2();
