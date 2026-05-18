@@ -55,8 +55,8 @@ pub fn grow_city(
     _max_dist: i32,
 ) -> Option<()> {
     while let Some((p, theta)) = queue.pop() {
-        let max_h = 14 + (random::<u64>() % 4) as i32;
-        for height in (10..=max_h).rev() {
+        let max_h = 8+ (random::<u64>() % 4) as i32;
+        for height in (6..=max_h).rev() {
             for dw in -1..=1 {
                 let width = height + dw;
                 let b = Building {
@@ -82,6 +82,7 @@ pub fn grow_city(
 
 pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
     fn cost(city: &City) -> i64 {
+       //return random();
         let c = 10;
         let mut point_count = 0;
         let mut average_distance = 0;
@@ -109,7 +110,7 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
                             let p1 = i.points[j];
                             let p2 = i.points[j + 1];
                             let d = distance_to_line_segmment(point, p1, p2) as f32;
-                            if d < 20. && !(*p == p1) {
+                            if d < 20.  {
                                 degeneracy += 1;
                             }
                             if *p == p1 {
@@ -135,7 +136,15 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
         let mut centroid_dist = 0;
         for (idx, i) in city.roads.iter().enumerate() {
             for (idx2, _j) in i.points.iter().enumerate() {
-                centroid_dist += (_j.as_vec2().distance_to(center) as i64);
+                let td 
+             = _j.as_vec2().distance_to(center) as i64;
+                let td2 = _j.as_vec2().distance_to(Vector2::new(500., 500.));
+                if td2>500.{
+                    centroid_dist+= 1000000;
+                }else{
+                    centroid_dist+= td.isqrt();
+                }
+
                 point_count += 1;
                 let distances = super::utils::distance_table(
                     &(idx, idx2),
@@ -156,16 +165,16 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
                             let x0 = i.points[k];
                             let x1 = i.points[k + 1];
                             let d = distance_to_line_segmment(*_j, x0, x1);
-                            if d < 20 {
-                                euc_dist -= 1000;
+                            if d < 10 && !(x0 == *_j || x1 == *_j){
+                                euc_dist -= 100;
                             } else {
-                                euc_dist += (d + 10).isqrt() as i64;
+                                euc_dist += (d+10 ).isqrt() as i64;
                             }
                         }
                         if let Some(x) = distances.get(&(idx, k)) {
                             let d = i.points[k].as_vec2().distance_to(_j.as_vec2()) as i32;
-                            if d < 20 {
-                                euc_dist -= 1000;
+                            if d < 20{
+                                euc_dist -= 100;
                             }
                             if (*x as i64) < dstar {
                                 dist += *x as i64;
@@ -177,14 +186,20 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
                         }
                     }
                 }
-                average_distance += dist;
+                _ = dist;
+                //centroid_dist += dist;
+             //   average_distance *= average_distance
             }
         }
-        average_distance /= point_count as i64;
-        degeneracy /= point_count;
+        //centroid_dist*= centroid_dist;
+        centroid_dist/= 100;
+     //  average_distance *= point_count as i64;
+     //   degeneracy /= point_count;
         //euc_dist/=point_count;
-        let cost = (euc_dist + centroid_dist) / (point_count);
-        cost - average_distance - degeneracy
+        let cost = (euc_dist - centroid_dist*10)/point_count;
+
+       // println!("cost:{}, average_distance:{}, degeneracy:{}", cost, average_distance, degeneracy);
+        cost -average_distance - degeneracy
     }
 
     fn try_update_city_extend(
@@ -201,7 +216,7 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
             let theta = (p0.as_vec2() - p1.as_vec2())
                 .normalized()
                 .angle_to(Vector2::new(1.0, 0.0));
-            theta
+        theta
         } else if try_point_idx == city.roads[try_road_idx].points.len() - 1 {
             let p1 = city.roads[try_road_idx].points[try_point_idx];
             let p0 = city.roads[try_road_idx].points[try_point_idx - 1];
@@ -226,18 +241,17 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
         let mut angle = base_angle;
         let mut hit = false;
         for rad in 20..=25 {
-            for theta in 0..4 {
+            for theta in 0..4{
                 let rad = rad * 2 + 5;
-                let mut theta =
-                    (theta) as f32 * PI / 2. + base_angle + (random::<u64>() % 10 - 5) as f32 / 60.;
-                if try_point_idx == city.roads[try_road_idx].points.len() - 1 {
-                    theta = base_angle + (random::<u64>() % 100 - 50) as f32 / 120.;
+                let theta =
+                    (theta) as f32 * PI / 2. + base_angle + ((random::<u64>() % 10) as i32 -5) as f32/2.;
+                /*if try_point_idx == city.roads[try_road_idx].points.len() - 1 {
+                    theta = base_angle + ((random::<u64>() % 100 ) as i32 -50)as f32 / 240.;
                 } else if try_point_idx == 0 {
-                    theta = base_angle + (random::<u64>() % 100 - 50) as f32 / 120.;
-                };
-                let theta = theta;
+                    theta = -base_angle + ((random::<u64>() % 100 ) as i32 -50)as f32 / 240.;
+                };*/ 
                 let p0 = base.as_vec2()
-                    + Vector2::new((theta as f32).cos(), (theta as f32).sin()) * (rad as f32);
+                    + Vector2::new((theta as f32).cos(), (theta as f32).sin()).normalized() * (rad as f32);
                 let mut min = 50000.0;
                 for (idx, j) in city.roads.iter().enumerate() {
                     for idx2 in 0..j.points.len() - 1 {
@@ -256,7 +270,7 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
                         }
                     }
                 }
-                if (min as i32 + (random::<u64>() % 10) as i32 - 5) > max_dist && min > 5. {
+                if (min as i32 + (random::<u64>() % 10) as i32 - 5) > max_dist  {
                     max_dist = min as i32;
                     hit = true;
                     max_point = Point::from_vec2(p0);
@@ -268,7 +282,7 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
             return (city.clone(), cost(&city));
         }
         let mut city_2 = city.clone();
-        if (angle - base_angle).abs() > PI / 2. {
+        if (angle - base_angle).abs() > 1000.0{
             city_2.roads.push(Road {
                 points: vec![base, max_point],
             })
@@ -299,24 +313,25 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
     let mut last_cost = -1000;
     let mut failed_count = 0;
     let mut dead_set: HashSet<(usize, usize)> = HashSet::new();
-    for i in 0..500 {
+    for i in 0..150 {
         let mut set = Vec::new();
         for (idx, i) in c2.roads.iter().enumerate() {
             for j in 0..i.points.len() {
                 if dead_set.contains(&(idx, j)) {
                     continue;
                 }
-                if j == 0 || j == i.points.len() - 1 || random_bool(0.0) {
+                if j == 0 || j == i.points.len() - 1 || random_bool(0.5) {
                     set.push((idx, j));
                 }
             }
         }
         set.shuffle(&mut rng());
         let mut cost_set = set
-            .par_iter()
+            .par_iter().take(10)
             .map(|x| {
                 let (idx, j) = *x;
-                let c3 = try_update_city_extend(&c2, idx, j);
+                let mut c3 = try_update_city_extend(&c2, idx, j);
+                c3.1 += (random::<u64>()%100) as i64 -50; 
                 (c3, *x)
             })
             .collect::<Vec<_>>();
@@ -369,14 +384,13 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
                     };
                     let mut tc = c2.clone();
                     tc.roads.push(r);
-                    let cost = cost(&tc);
+                    let cost = cost(&tc)+ (random::<u64>()%100) as i64 -50;
                     cost_set.push(((tc, cost), (idx, idx2)));
                 }
             }
         }
-        let mut max = 0;
-        let mut max_idx = 0;
-        let bcost = last_cost;
+        let mut max = -1000000000000000;
+        let mut max_idx = 0; 
         for (idx, i) in cost_set.iter().enumerate() {
             if i.0.1 > max {
                 max = i.0.1;
@@ -393,8 +407,10 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
             continue;
         }*/
         failed_count = 0;
-        last_cost = tcost;
-        c2 = tmp.0.0;
+     //   if tcost>=last_cost{
+            last_cost = tcost;
+            c2 = tmp.0.0;
+     //   }
         //dead_set.insert(tmp.1);
         println!("max_index:{}, idx:{}, cost:{}", max_idx, i, tmp.0.1);
         if i % 3 == 0 {
@@ -468,7 +484,7 @@ impl City {
                     let p0 = i.points[j];
                     let p1 = i.points[j + 1];
                     let d = building.bounds.distance_to_line(p0, p1);
-                    if d < 4 {
+                    if d < 2{
                         return false;
                     }
                     if d < min_dist {
