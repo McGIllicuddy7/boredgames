@@ -10,7 +10,7 @@ pub mod builder;
 pub mod generators;
 #[tokio::main]
 pub async fn main() {
-    let city = create_city(1000);
+    let city = create_city(10000);
     city.draw();
     //  println!("{:#?}", city.buildings);
 }

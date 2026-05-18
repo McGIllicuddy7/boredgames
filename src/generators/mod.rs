@@ -9,6 +9,9 @@ pub mod city;
 pub mod utils;
 //https://www.geeksforgeeks.org/dsa/minimum-distance-from-a-point-to-the-line-segment-using-vectors/
 pub fn distance_to_line_segmment(point: Point, start: Point, end: Point) -> i32 {
+    if start == end {
+        return point.as_vec2().distance_to(start.as_vec2()) as i32;
+    }
     let e = point.as_vec2();
     let a = start.as_vec2();
     let b = end.as_vec2();
