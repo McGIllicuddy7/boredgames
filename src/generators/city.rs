@@ -337,6 +337,9 @@ pub fn set_up_roads(city: &mut City) -> Vec<(Point, f32)> {
             .collect::<Vec<_>>();
         for (idx, i) in c2.roads.iter().enumerate() {
             'lp: for (idx2, k) in c2.roads.iter().enumerate() {
+                if random_bool(0.8){
+                    continue;
+                }
                 if dead_set.contains(&(idx, idx2)) {
                     continue;
                 }
